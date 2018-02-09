@@ -1,25 +1,5 @@
 #!/bin/bash
-# 樣本腳本
-
-
-##shStyle ###
-
-
-##shStyle 介面函式
-# 對外接口 請驗證輸入值
-# 禁止介面函式間相互調用 避免全域變數混雜
-
-##shStyle 共享變數
-
-##shStyle 函式庫
-# 若有來源者請註記
-# 所有功能請在函式範圍內完成 fnLib, fnLib_xxx, rtnLib_xxx
-# 僅允許使用 腳本環境、共享變數 的全域物件
-
-##shStyle 腳本環境
-
-##shStyle ###
-# 不共享環境、專屬環境或其他分類
+# 怕蒂瑪其小幫手腳本
 
 
 ##shStyle ###
@@ -29,10 +9,7 @@ _originPlace="lib"
 
 _shScript() {
     case "$1" in
-    subCmdA ) _shCmdLevel=1;
-        case "$2" in
-        subCmdB ) _shCmdLevel=2 ;;
-        esac ;;
+    blkid ) _shCmdLevel=1 ;;
     esac
 }
 
@@ -40,13 +17,10 @@ _shScript() {
 ##shStyle 介面函式
 
 
-fnHelp_main() { echo "# 主命令簡述
-# 主命令說明 1
-# 主命令說明 2
-# 主命令說明 3 ...
+fnHelp_main() { echo "# 備份小幫手，通過 sgdisk 及 partclone 備份裝置。
 [[USAGE]] [多個參數]
 [[SUBCMD]]
-  subCmdA    $fnHelp_subCmdA_briefly
+  blkid    $fnHelp_blkid_briefly
 [[OPT]]
   -h, --help                 幫助。
 "; }
@@ -73,45 +47,42 @@ fnMain() {
     printf "執行主命令\n  攜帶選項： %s\n  攜帶參數： %s\n" "$opt_carryOpt" "(${#_args[@]}) ${_args[*]}"
 }
 
-fnHelp_subCmdA_briefly="A 子命令。"
-fnHelp_subCmdA() { echo "# $fnHelp_subCmdA_briefly
-[[USAGE]]
-[[SUBCMD]]
-  subCmdB    $fnHelp_subCmdA_subCmdB_briefly
+fnHelp_blkid_briefly="顯示 \`blkid\` 資訊。"
+fnHelp_blkid() { echo "# $fnHelp_blkid_briefly
+[[USAGE]] $help_allowDevice
 [[OPT]]
-  -h, --help                 幫助。
+  -s, --show <tag>[,...]   顯示指定標籤。 預設為 \"PTTYPE,UUID,PARTUUID\"。
+  -h, --help               幫助。
 "; }
-fnOpt_subCmdA() {
+fnOpt_blkid() {
     case "$1" in
-        -h | --help ) fnShowHelp ;;
-        * ) return 3 ;;
-    esac
-}
-fnMain_subCmdA() {
-    fnParseOption
-    echo "執行 A 子命令"
-}
+        -s | --show )
+            [ -z "$2" ] && return 4
 
-fnHelp_subCmdA_subCmdB_briefly="B 子命令。"
-fnHelp_subCmdA_subCmdB() { echo "# $fnHelp_subCmdA_subCmdB_briefly
-[[USAGE]]
-[[OPT]]
-  -h, --help                 幫助。
-"; }
-fnOpt_subCmdA_subCmdB() {
-    case "$1" in
+            opt_show="$2"
+            return 2
+            ;;
         -h | --help ) fnShowHelp ;;
         * ) return 3 ;;
     esac
 }
-fnMain_subCmdA_subCmdB() {
+fnMain_blkid() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_show="PTTYPE,UUID,PARTUUID"
     fnParseOption
-    echo "執行 B 子命令"
+
+    fnParseDeviceList "${_args[@]}"
+    fnBlkidTable "$opt_show" \
+        "${rtnParseDeviceList_pt[@]}" \
+        "${rtnParseDeviceList_store[@]}"
 }
 
 
 ##shStyle 共享變數
 
+
+help_allowDevice='<裝置 ex: "/dev/sdx","/dev/sdxN">[...]'
 
 
 ##shStyle 函式庫
@@ -151,6 +122,126 @@ fnRandomStr() {
     echo $strAns
 }
 fnRandomStr_count16="0123456789ABCDEF"
+
+fnCheckMountState() {
+    [ -z "$*" ] && return
+    [ $fnCheckMountState_hasCheck -eq 1 ] && return
+
+    local tmp val
+    local bisHasNotCheck=0
+    local bisHasUmount=0
+
+    ## lsblk img
+    # 錯誤 lsblk 不能處理非裝置
+    # 但若執行 /dev/loop 又會因為未卸載而退出
+    for val in "$@"
+    do
+        tmp=`lsblk -o MOUNTPOINT "$val" 2> /dev/null`
+        if [ $? -ne 0 ]; then
+            bisHasNotCheck=1
+            printf "$_fYelB%s$_fN\n" \
+                "無法確認 \"$val\" 是否已卸載！"
+        elif [ -n "`echo "$tmp" | sed "1d" | grep .`" ]; then
+            bisHasUmount=1
+            Loxog err "請卸載 \"$val\" 裝置。"
+        fi
+    done
+
+    [ $bisHasUmount -eq 1 ] && exit 1
+
+    if [ $bisHasNotCheck -eq 1 ]; then
+        printf "$_fYelB%s\n%s$_fN %s" \
+            "！！！ 未卸載的裝置可能會有誤刪資料的風險 ！！！" \
+            "請手動檢查無法確認之裝置。" \
+            "（<Ctrl+c> 退出； <Enter> 繼續；）"
+        read
+        echo
+    fi
+
+    fnCheckMountState_hasCheck=1
+}
+fnCheckMountState_hasCheck=0
+fnCheckMountState_hasNotCheck=0
+
+rtnParseDeviceList_pt=()
+rtnParseDeviceList_store=()
+fnParseDeviceList() {
+    if [ -z "$*" ]; then
+        Loxog err "未指定裝置。"
+        exit 1
+    fi
+
+    local val ptType
+    local hasNoAllowDevice=0
+    local devicePtList=()
+    local deviceList=()
+
+    for val in "$@"
+    do
+        ptType=`blkid -o value -s PTTYPE "$val"`
+        if [ $? -ne 0 ]; then
+            hasNoAllowDevice=1
+            Loxog err "找不到 \"$val\" 裝置。"
+            continue
+        elif [ -n "$ptType" ] && [ "$ptType" != "gpt" ]; then
+            hasNoAllowDevice=1
+            Loxog err '尚未對非 "GPT" 分區表的裝置提供服務。'
+            continue
+        fi
+
+        [ "$ptType" == "gpt" ] \
+            && devicePtList[ ${#devicePtList[@]} ]=$val \
+            || deviceList[ ${#deviceList[@]} ]=$val
+    done
+
+    [ $hasNoAllowDevice -ne 0 ] && exit 1
+    fnCheckMountState "${devicePtList[@]}" "${deviceList[@]}"
+
+    rtnParseDeviceList_pt=("${devicePtList[@]}")
+    rtnParseDeviceList_store=("${deviceList[@]}")
+}
+
+# lsblk 資訊時而空白
+fnBlkidTable() {
+    local showList="$1"; shift
+
+    fnCutArray "," "$showList"
+    showList=("${rtnCutArray[@]}")
+
+    local tmp idx val deviceName
+    local blkidInfo=""
+    local arrInfo=()
+    local txtInfo=""
+    local formatArgus=""
+    local strAns=""
+
+    for deviceName in "$@"
+    do
+        txtInfo+=$_br"0 $deviceName"
+        arrInfo[ ${#arrInfo[@]} ]=$deviceName
+
+        idx=1
+        for val in "${showList[@]}"
+        do
+            blkidInfo=`blkid -s "$val" -o value "$deviceName"`
+            arrInfo[ ${#arrInfo[@]} ]=$blkidInfo
+            txtInfo+=$_br"$idx $blkidInfo"
+            (( idx++ ))
+        done
+    done
+
+    idx=1
+    for idx in `seq 0 ${#showList[@]}`
+    do
+        tmp=${showList[ $(( $idx - 1 )) ]}$_br
+        tmp+=`echo "$txtInfo" | grep "^$idx " | cut -d " " -f 2-`
+        formatArgus+="   %-"`echo "$tmp" | wc -L`"s"
+    done
+    formatArgus=${formatArgus:3}$_br
+
+    printf "$formatArgus" "DEVNAME" "${showList[@]}"
+    printf "$formatArgus" "${arrInfo[@]}"
+}
 
 
 ##shStyle 腳本環境
