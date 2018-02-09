@@ -29,35 +29,101 @@ _shScript() {
 
 
 fnHelp_main() { echo "# 備份小幫手，通過 sgdisk 及 partclone 備份裝置。
-[[USAGE]] [多個參數]
+$help_partcloneOptExplain
+[[USAGE]] <備份儲存位置> $help_allowDevice
 [[SUBCMD]]
   blkid     $fnHelp_blkid_briefly
   info      $fnHelp_info_briefly
   backup    $fnHelp_backup_briefly
 [[OPT]]
+$help_partcloneOpt
   -h, --help                 幫助。
 "; }
 fnOpt_main() {
     case "$1" in
         -h | --help ) fnShowHelp ;;
-        * )
-            if [ -z "$2" ]; then
-                opt_carryOpt+="$1 "
-                return 1
-            else
-                opt_carryOpt+="$1=\"$2\" "
-                return 2
-            fi
-            ;;
+        * ) fnOpt_partcloneOpt "$@" ;;
     esac
 }
 fnMain() {
     [ $# -eq 0 ] && fnShowHelp
 
-    opt_carryOpt=""
+    opt_partcloneOpt=""
     fnParseOption
 
-    printf "執行主命令\n  攜帶選項： %s\n  攜帶參數： %s\n" "$opt_carryOpt" "(${#_args[@]}) ${_args[*]}"
+    local tmp
+    local dirPath="${_args[0]}"
+
+    if [ -z "$dirPath" ]; then
+        Loxog err "未指定備份儲存位置。"
+        exit 1
+    elif [ -e "$dirPath" ] && [ ! -d "$dirPath" ]; then
+        Loxog err "指定的備份位置存在文件。"
+        exit 1
+    elif [ -d "$dirPath" ] && [ -n "`ls -A "$dirPath"`" ]; then
+        Loxog err "指定的備份位置不為空目錄。"
+        exit 1
+    fi
+
+    fnParseDeviceList "${_args[@]:1}"
+    local devicePtList=("${rtnParseDeviceList_pt[@]}")
+    local deviceList=("${rtnParseDeviceList_store[@]}")
+
+    local mdInfo
+    local shHead="#!/bin/bash$_br#$_br"
+    local pathTxt=""
+    local shCodeTxt=""
+    local restoreGptSh=""
+    local cloneGptSh=""
+    local restoreSh=""
+    local cloneSh=""
+
+    fnTxtPathForm() {
+        [ -n "$pathTxt" ] && pathTxt+=$_br
+        pathTxt+="─┬ $1"
+        pathTxt+=$_br" ├── 還原 -> $dirPath/$2.sh"
+        pathTxt+=$_br" └── 備份 -> $dirPath/$3.sh"
+    }
+
+    if [ ${#devicePtList[@]} -ne 0 ]; then
+        fnTxtPathForm "分區表裝置" "restoreGpt" "cloneGpt"
+        fnBackupCode GPT "" "${devicePtList[@]}"
+        restoreGptSh=$shHead"$rtnBackupCode_restore"
+        cloneGptSh=$shHead"$rtnBackupCode_clone"
+    fi
+    if [ ${#deviceList[@]} -ne 0 ]; then
+        fnTxtPathForm "儲存裝置" "restore" "clone"
+        fnBackupCode store "$opt_partcloneOpt" "${deviceList[@]}"
+        restoreSh=$shHead"$rtnBackupCode_restore"
+        cloneSh=$shHead"$rtnBackupCode_clone"
+    fi
+
+    tmp="留存裝置資訊"
+    printf "$tmp ( 讀取中 ... )"
+    fnGetInfo_devicePtList=("${devicePtList[@]}")
+    fnGetInfo_deviceList=("${deviceList[@]}")
+    fnGetInfo
+    mdInfo=$rtnGetInfo
+    pathTxt="── 裝置資訊 -> $dirPath/hostInfo.txt"$_br$pathTxt
+    printf "\r\e[K%s\n\n" "$tmp ( 成功 )"
+
+    if [ ! -d "$dirPath" ]; then
+        mkdir -p "$dirPath"
+        tmp=$?; [ $tmp -ne 0 ] && exit $tmp
+    fi
+
+    echo "$pathTxt"
+    echo "$mdInfo" > "$dirPath/hostInfo.txt"
+    if [ -n "$restoreGptSh" ]; then
+        echo "$restoreGptSh" > "$dirPath/restoreGpt.sh"
+        echo "$cloneGptSh" > "$dirPath/cloneGpt.sh"
+        chmod 755 "$dirPath/restoreGpt.sh" "$dirPath/cloneGpt.sh"
+    fi
+    if [ -n "$restoreSh" ]; then
+        echo "$restoreSh" > "$dirPath/restore.sh"
+        echo "$cloneSh" > "$dirPath/clone.sh"
+        chmod 755 "$dirPath/restore.sh" "$dirPath/clone.sh"
+    fi
 }
 
 fnHelp_blkid_briefly="顯示 \`blkid\` 資訊。"
