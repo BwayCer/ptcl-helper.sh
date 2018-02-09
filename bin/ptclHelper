@@ -117,6 +117,41 @@ fnMain_subCmdA_subCmdB() {
 ##shStyle 函式庫
 
 
+rtnCutArray=()
+fnCutArray() {
+    local separator strTxt
+    separator="$1"
+    strTxt="$2"
+
+    local idx val
+    local arrAns=()
+
+    idx=2
+    while [ 1 ]
+    do
+        val=`echo "$separator$strTxt" | cut -d "$separator" -f $idx`
+        [ "$val" == "" ] && break
+        arrAns[ ${#arrAns[@]} ]=$val
+        (( idx++ ))
+    done
+
+    rtnCutArray=("${arrAns[@]}")
+}
+
+fnRandomStr() {
+    local loop rem
+    local random=$RANDOM
+    local strAns=""
+    for loop in {1..2}
+    do
+        rem=$[ $random & 15 ]
+        random=$[ $random >> 4 ]
+        strAns+=${fnRandomStr_count16:$rem:1}
+    done
+    echo $strAns
+}
+fnRandomStr_count16="0123456789ABCDEF"
+
 
 ##shStyle 腳本環境
 
