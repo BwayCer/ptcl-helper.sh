@@ -1,0 +1,317 @@
+#!/bin/bash
+# 樣本腳本
+
+
+##shStyle ###
+
+
+##shStyle 介面函式
+# 對外接口 請驗證輸入值
+# 禁止介面函式間相互調用 避免全域變數混雜
+
+##shStyle 共享變數
+
+##shStyle 函式庫
+# 若有來源者請註記
+# 所有功能請在函式範圍內完成 fnLib, fnLib_xxx, rtnLib_xxx
+# 僅允許使用 腳本環境、共享變數 的全域物件
+
+##shStyle 腳本環境
+
+##shStyle ###
+# 不共享環境、專屬環境或其他分類
+
+
+##shStyle ###
+
+
+_originPlace="lib"
+
+_shScript() {
+    case "$1" in
+    subCmdA ) _shCmdLevel=1;
+        case "$2" in
+        subCmdB ) _shCmdLevel=2 ;;
+        esac ;;
+    esac
+}
+
+
+##shStyle 介面函式
+
+
+fnHelp_main() { echo "# 主命令簡述
+# 主命令說明 1
+# 主命令說明 2
+# 主命令說明 3 ...
+[[USAGE]] [多個參數]
+[[SUBCMD]]
+  subCmdA    $fnHelp_subCmdA_briefly
+[[OPT]]
+  -h, --help                 幫助。
+"; }
+fnOpt_main() {
+    case "$1" in
+        -h | --help ) fnShowHelp ;;
+        * )
+            if [ -z "$2" ]; then
+                opt_carryOpt+="$1 "
+                return 1
+            else
+                opt_carryOpt+="$1=\"$2\" "
+                return 2
+            fi
+            ;;
+    esac
+}
+fnMain() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_carryOpt=""
+    fnParseOption
+
+    printf "執行主命令\n  攜帶選項： %s\n  攜帶參數： %s\n" "$opt_carryOpt" "(${#_args[@]}) ${_args[*]}"
+}
+
+fnHelp_subCmdA_briefly="A 子命令。"
+fnHelp_subCmdA() { echo "# $fnHelp_subCmdA_briefly
+[[USAGE]]
+[[SUBCMD]]
+  subCmdB    $fnHelp_subCmdA_subCmdB_briefly
+[[OPT]]
+  -h, --help                 幫助。
+"; }
+fnOpt_subCmdA() {
+    case "$1" in
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_subCmdA() {
+    fnParseOption
+    echo "執行 A 子命令"
+}
+
+fnHelp_subCmdA_subCmdB_briefly="B 子命令。"
+fnHelp_subCmdA_subCmdB() { echo "# $fnHelp_subCmdA_subCmdB_briefly
+[[USAGE]]
+[[OPT]]
+  -h, --help                 幫助。
+"; }
+fnOpt_subCmdA_subCmdB() {
+    case "$1" in
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_subCmdA_subCmdB() {
+    fnParseOption
+    echo "執行 B 子命令"
+}
+
+
+##shStyle 共享變數
+
+
+
+##shStyle 函式庫
+
+
+
+##shStyle 腳本環境
+
+
+[ -L "$0" ] && exec "`realpath "$0"`" "$@"
+
+__filename=`realpath "$0"`
+_dirsh=`dirname "$__filename"`
+[ "$_originPlace" == "bin" ] && _binsh=$_dirsh || _binsh=`realpath "$_dirsh/../../bin"`
+[ "$_originPlace" == "bin" ] && _libsh=`realpath "$_dirsh/../lib"` || _libsh=`realpath "$_dirsh/.."`
+_fileName=`basename "$0"`
+
+_IFS=$IFS
+_br="
+"
+
+tmp=`tput colors`
+if [ -t 1 ] && [ -n "$tmp" ] && [ $tmp -ge 8 ]; then
+    _fN=`tput sgr0`
+    _f_bold=`tput bold`
+    _fRed=`tput setaf 1`
+    _fYel=`tput setaf 3`
+    _fRedB=$_fRed$_f_bold
+    _fYelB=$_fYel$_f_bold
+fi
+
+Loxog() {
+    local _stdin=`[ ! -t 0 ] && { \
+        IFS='';
+        while read pipeData; do echo "$pipeData"; done <&0;
+        IFS=$_IFS;
+    }`
+    local method="$1"; shift
+
+    local color formatArgus
+
+    case $method in
+        war ) color=$_fYelB ;;
+        err ) color=$_fRedB ;;
+    esac
+
+    formatArgus="$color%s$_fN\n"
+
+    local idx val len
+
+    [ -n "$*" ] && printf "$formatArgus" "$@" 1>&2
+
+    [ -z "$_stdin" ] && return
+    len=`echo "$_stdin" | wc -l`
+    for idx in `seq 1 $len`
+    do
+        val=`echo "$_stdin" | sed -n "${idx}p"`
+        printf "$formatArgus" "$val" 1>&2
+    done
+}
+
+
+##shStyle ###
+
+
+_stdin=`[ ! -t 0 ] && while read pipeData; do echo $pipeData; done <&0`
+
+_args=("$@")
+_origArgs=("$@")
+
+argsShift() {
+    local amount=$1
+
+    if [ -z "$amount" ] || [ $amount -lt 1 ]; then amount=1; fi
+    _args=("${_args[@]:$amount}")
+}
+
+_fnForceColor() {
+    _fN="\e[00m"
+    _f_bold="\e[01m"
+    _fRed="\e[31m"
+    _fYel="\e[33m"
+    _fRedB=$_fRed$_f_bold
+    _fYelB=$_fYel$_f_bold
+}
+
+fnParseOption() {
+    local fnHandleOpt="fnOpt_$_shCmd"
+
+    local tmp args opt val cutLen errMsg
+    args=("${_args[@]}")
+    errMsg=""
+
+    while [ 1 ]
+    do
+        opt=${args[0]}
+        val=${args[1]}
+        cutLen=2
+
+        if [ "$opt" == "--" ] || [ -z "`echo "_$opt" | grep "^_-"`" ]; then break; fi
+
+        if [ -n "`echo "_$opt" | grep "^_-[^-]"`" ] && [ ${#opt} -ne 2 ]; then
+            tmp="-"${opt:2}
+            opt=${opt:0:2}
+            val=""
+            cutLen=1
+            args=("$opt" "$tmp" "${args[@]:1}")
+        elif [ -n "`echo "_$val" | grep "^_-"`" ]; then
+            val=""
+            cutLen=1
+        fi
+
+        if [ "$opt" == "--color" ]; then
+            _fnForceColor
+            tmp=1
+        else
+            $fnHandleOpt "$opt" "$val"
+            tmp=$?
+        fi
+        case $tmp in
+            0 )
+                echo '請檢查 "'$fnHandleOpt'" 的錯誤回傳值。' 1>&2
+                exit
+                ;;
+            # 使用 1 個參數
+            1 )
+                [ $cutLen -eq 2 ] && (( cutLen-- ))
+                ;;
+            # 使用 2 個參數
+            2 ) ;;
+            3 )
+                errMsg+=$_br'找不到 "'$opt'" 選項。'
+                ;;
+            4 )
+                [ "$val" == "" ] && val="null" || val='"'$val'"'
+                errMsg+=$_br$val' 不符合 "'$opt'" 選項的預期值。'
+                ;;
+        esac
+
+        args=("${args[@]:$cutLen}")
+    done
+
+    if [ "${args[0]}" == "--" ]; then
+        args=("${args[@]:1}")
+    else
+        for val in "${args[@]}"
+        do
+            [ -z "`echo "_$val" | grep "^_-"`" ] && continue
+
+            errMsg+=$_br'不符合 "[命令] [選項] [參數]" 的命令用法。'
+            break
+        done
+    fi
+
+    if [ -z "$errMsg" ]; then
+        _args=("${args[@]}")
+        return
+    fi
+
+    echo "$errMsg" | sed "1d" \
+        | sed "s/^\(.\)/[$_fileName]: \1/" \
+        | Loxog err
+    exit 1
+}
+
+fnShowHelp() {
+    local txtHelp=`fnHelp_$_shCmd`
+
+    local bisUsage bisSubCmd bisOpt
+    local usage
+    bisUsage=` echo "$txtHelp" | grep "\[\[USAGE\]\]"`
+    bisSubCmd=`echo "$txtHelp" | grep "\[\[SUBCMD\]\]"`
+    bisOpt=`   echo "$txtHelp" | grep "\[\[OPT\]\]"`
+
+    if [ -n "$bisUsage" ]; then
+        usage="用法："
+        [ -n "$bisSubCmd" ] && usage+=" [命令]"
+        [ -n "$bisOpt" ] && usage+=" [選項]"
+
+        txtHelp=`echo "$txtHelp" | sed "s/\[\[USAGE\]\]/\n$usage/"`
+    fi
+
+    [ -n "$bisSubCmd" ] && \
+        txtHelp=`echo "$txtHelp" | sed "s/\[\[SUBCMD\]\]/\\n\\n命令：\\n/"`
+
+    [ -n "$bisOpt" ] && \
+        txtHelp=`echo "$txtHelp" | sed "s/\[\[OPT\]\]/\\n\\n選項：\\n/"`
+
+    echo "$txtHelp$_br"
+    exit
+}
+
+
+_shCmd=""
+_shCmdLevel=0
+_shScript "$@"
+[ $_shCmdLevel -eq 0 ] && _shCmd="main" && fnMain "$@" && exit
+for tmp in `seq 0 $(( $_shCmdLevel -1 ))`
+do _shCmd+="_${_args[ $tmp ]}"; done
+argsShift $_shCmdLevel
+_shCmd=${_shCmd:1}
+fnMain_$_shCmd "${_args[@]}"
+
