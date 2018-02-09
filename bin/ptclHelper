@@ -18,8 +18,9 @@ _shScript() {
 
 
     case "$1" in
-    blkid ) _shCmdLevel=1 ;;
-    info  ) _shCmdLevel=1 ;;
+    blkid  ) _shCmdLevel=1 ;;
+    info   ) _shCmdLevel=1 ;;
+    backup ) _shCmdLevel=1 ;;
     esac
 }
 
@@ -30,8 +31,9 @@ _shScript() {
 fnHelp_main() { echo "# 備份小幫手，通過 sgdisk 及 partclone 備份裝置。
 [[USAGE]] [多個參數]
 [[SUBCMD]]
-  blkid    $fnHelp_blkid_briefly
-  info     $fnHelp_info_briefly
+  blkid     $fnHelp_blkid_briefly
+  info      $fnHelp_info_briefly
+  backup    $fnHelp_backup_briefly
 [[OPT]]
   -h, --help                 幫助。
 "; }
@@ -113,11 +115,155 @@ fnMain_info() {
     echo "$rtnGetInfo"
 }
 
+fnHelp_backup_briefly="顯示備份或還原的相關文件。"
+fnHelp_backup() { echo "# $fnHelp_backup_briefly
+[[USAGE]] <備份儲存位置> $help_allowDevice
+[[OPT]]
+  -i, --info                 $fnHelp_info_briefly
+$help_partcloneOpt
+  -h, --help                 幫助。
+"; }
+fnOpt_backup() {
+    case "$1" in
+        -i | --info )
+            opt_Info=1
+            return 1
+            ;;
+        -h | --help ) fnShowHelp ;;
+        * ) fnOpt_partcloneOpt "$@" ;;
+    esac
+}
+fnMain_backup() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_Info=0
+    opt_partcloneOpt=""
+    fnParseOption
+
+    local tmp
+    local dirPath="${_args[0]}"
+
+    if [ -z "$dirPath" ]; then
+        Loxog err "未指定備份儲存位置。"
+        exit 1
+    fi
+
+    fnParseDeviceList "${_args[@]:1}"
+    local devicePtList=("${rtnParseDeviceList_pt[@]}")
+    local deviceList=("${rtnParseDeviceList_store[@]}")
+
+    local shHead="#!/bin/bash$_br#$_br"
+    local pathTxt=""
+    local shCodeTxt=""
+
+    fnTxtForm() {
+        local method="$1"
+        case "$method" in
+            path )
+                [ -n "$pathTxt" ] && pathTxt+=$_br
+                pathTxt+="─┬ $4"
+                pathTxt+=$_br" ├── 還原 -> $dirPath/$2.sh"
+                pathTxt+=$_br" └── 備份 -> $dirPath/$3.sh"
+                ;;
+            code )
+                [ -n "$shCodeTxt" ] && shCodeTxt+=$_br$_br
+                shCodeTxt+="## $dirPath/$2.sh"$_br$shHead$4
+                shCodeTxt+=$_br$_br
+                shCodeTxt+="## $dirPath/$3.sh"$_br$shHead$5
+                ;;
+        esac
+    }
+
+    if [ ${#devicePtList[@]} -ne 0 ]; then
+        fnTxtForm path "restoreGpt" "cloneGpt" "分區表裝置"
+
+        fnBackupCode GPT "" "${devicePtList[@]}"
+        fnTxtForm code "restoreGpt" "cloneGpt" \
+            "$rtnBackupCode_restore" "$rtnBackupCode_clone"
+    fi
+    if [ ${#deviceList[@]} -ne 0 ]; then
+        fnTxtForm path "restore" "clone" "儲存裝置"
+
+        fnBackupCode store "$opt_partcloneOpt" "${deviceList[@]}"
+        fnTxtForm code "restore" "clone" \
+            "$rtnBackupCode_restore" "$rtnBackupCode_clone"
+    fi
+
+    if [ $opt_Info -eq 1 ]; then
+        printf "留存裝置資訊 ( 讀取中 ... )"
+        fnGetInfo_devicePtList=("${devicePtList[@]}")
+        fnGetInfo_deviceList=("${deviceList[@]}")
+        fnGetInfo
+        pathTxt="── 裝置資訊 -> $dirPath/hostInfo.txt"$_br$pathTxt
+        printf "\r\e[K%s\n" "$rtnGetInfo"
+        for tmp in {1..9}; do printf "=-------"; done; echo -e "=\n\n"
+    fi
+
+    echo "$pathTxt$_br$_br"'```'"$_br$shCodeTxt$_br"'```'
+}
+
 
 ##shStyle 共享變數
 
 
 help_allowDevice='<裝置 ex: "/dev/sdx","/dev/sdxN">[...]'
+
+help_partcloneOptExplain="# \`partclone\` 相關選項可以查看 \`man partclone\` 說明。"
+help_partcloneOpt="
+  -D, --domain               Create ddrescue domain log from source device.
+                             \`partclone\` 相關選項。
+      --offset_domain <X>    Add offset X (bytes) to domain log values.
+                             \`partclone\` 相關選項。
+      --restore_raw_file     create special raw file for loop device.
+                             \`partclone\` 相關選項。
+  -l, --logfile <logfile>    輸出 partclone 日誌訊息到指定路徑。
+                             預設為 /var/log/partclone.log。
+                             \`partclone\` 相關選項。
+  -R, --rescue               即使有錯誤仍繼續執行。 \`partclone\` 相關選項。
+  -C, --no_check             不要檢查設備的大小和可用空間。
+                             \`partclone\` 相關選項。
+  -N, --ncurse               Using Ncurses User Interface.
+                             \`partclone\` 相關選項。
+  -X, --dialog               Output message as Dialog Format.
+                             \`partclone\` 相關選項。
+  -I, --ignore_fschk         忽略檔案系統檢查。 \`partclone\` 相關選項。
+      --ignore_crc           忽略 crc 檢查。 \`partclone\` 相關選項。
+  -F, --force                強制執行。 \`partclone\` 相關選項。
+  -f, --UI-fresh <sec>       Fresh times of progress.  \`partclone\` 相關選項。
+  -z, --buffer_size <size>   讀取或寫入的緩衝區大小。 預設為 1048576。
+                             \`partclone\` 相關選項。
+  -q, --quiet                無聲模式。 停用進度訊息顯示。
+                             \`partclone\` 相關選項。
+  -d, --debug <level>        設定除錯層級 [1|2|3]。 \`partclone\` 相關選項。
+"
+help_partcloneOpt=`echo "$help_partcloneOpt" | sed '1d' | sed '$d'`
+fnOpt_partcloneOpt() {
+    local tmp="$1"
+    [ ${#tmp} -eq 2 ] && tmp=${tmp:1:1}
+    case "$tmp" in
+        [DRCNXIFq] | --domain | --restore_raw_file | --rescue \
+            | --no_check | --ncurse | --dialog | --ignore_fschk \
+            | --ignore_crc | --force | --quiet )
+            opt_partcloneOpt+=" $1"
+            return 1
+            ;;
+        [lfz] | --logfile | --UI-fresh | --buffer_size )
+            [ -z "$2" ] && return 4
+
+            opt_partcloneOpt+=" $1 $2"
+            return 2
+            ;;
+        d | --debug | --offset_domain )
+            [ -z "$2" ] && return 4
+
+            [ ${#opt} -eq 1 ] \
+                && opt_partcloneOpt+=" $1$2" \
+                || opt_partcloneOpt+=" $1=$2"
+            return 2
+            ;;
+        * ) return 3 ;;
+    esac
+}
 
 
 ##shStyle 函式庫
@@ -426,6 +572,66 @@ fnGetInfo_MdForm() {
     txtForm+=$_br
 
     rtnGetInfo=$txtForm
+}
+
+rtnBackupCode_restore=""
+rtnBackupCode_clone=""
+fnBackupCode() {
+    local val
+    local deviceType="$1"
+    local customOpt="$2"; shift 2
+
+    local restoreSh=""
+    local cloneSh=""
+
+    for val in "$@"
+    do
+        [ -n "$restoreSh" ] && restoreSh+=$_br && cloneSh+=$_br
+        fnBackupCode_single "$deviceType" "$customOpt" "$val"
+        restoreSh+="$fnBackupCode_singleRestore"
+        cloneSh+="$fnBackupCode_singleClone"
+    done
+
+    rtnBackupCode_restore="$restoreSh"
+    rtnBackupCode_clone="$cloneSh"
+}
+fnBackupCode_singleRestore=""
+fnBackupCode_singleClone=""
+fnBackupCode_single() {
+    local tmp tmpRestore tmpClone
+    local deviceType="$1"
+    local customOpt="$2"
+    local device="$3"
+
+    local name fsType
+    local restoreCode=""
+    local cloneCode=""
+
+    tmpRestore='device="$1"; shift;'
+    tmpClone='[ -n "$1" ] && device="$1" || device="'`realpath "$device"`'"; shift;'
+    case "$deviceType" in
+        GPT )
+            name="./partitionData_`basename "$device"`.`fnRandomStr`.gpt"
+            tmp=$_br'sgdisk '$customOpt
+            tmpRestore+=$tmp
+            tmpClone+=$tmp
+            restoreCode=$tmpRestore' --load-backup "'$name'" "$device"'
+            cloneCode=$tmpClone' --backup "'$name'" "$device"'
+            ;;
+        store )
+            fsType=`blkid -o value -s TYPE "$device"`
+            name=`basename "$device" | sed "s/\([^.]*\)\..*/\1/g"`
+            name="device_${name}_${fsType}.`fnRandomStr`.ptcl.img"
+            tmp=$_br"partclone.$fsType"
+            tmpRestore+=$tmp
+            tmpClone+=$tmp
+            restoreCode=$tmpRestore' --restore '$customOpt' -s "'$name'" -o "$device"'
+            cloneCode=$tmpClone' --clone '$customOpt' -s "$device" -o "'$name'"'
+            ;;
+    esac
+
+    fnBackupCode_singleRestore=$restoreCode
+    fnBackupCode_singleClone=$cloneCode
 }
 
 
