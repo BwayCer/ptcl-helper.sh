@@ -7,9 +7,19 @@
 
 _originPlace="lib"
 
+# 避免語言支持不完全，如： df。
+export LC_ALL=C
+
 _shScript() {
+    if [ "`id -u`" != "0" ]; then
+        Loxog err "請使用 root 身分執行。"
+        exit 1
+    fi
+
+
     case "$1" in
     blkid ) _shCmdLevel=1 ;;
+    info  ) _shCmdLevel=1 ;;
     esac
 }
 
@@ -21,6 +31,7 @@ fnHelp_main() { echo "# 備份小幫手，通過 sgdisk 及 partclone 備份裝�
 [[USAGE]] [多個參數]
 [[SUBCMD]]
   blkid    $fnHelp_blkid_briefly
+  info     $fnHelp_info_briefly
 [[OPT]]
   -h, --help                 幫助。
 "; }
@@ -76,6 +87,30 @@ fnMain_blkid() {
     fnBlkidTable "$opt_show" \
         "${rtnParseDeviceList_pt[@]}" \
         "${rtnParseDeviceList_store[@]}"
+}
+
+fnHelp_info_briefly="留存當前裝置資訊供還原後對照。"
+fnHelp_info() { echo "# $fnHelp_info_briefly
+[[USAGE]] $help_allowDevice
+[[OPT]]
+  -h, --help   幫助。
+"; }
+fnOpt_info() {
+    case "$1" in
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_info() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    fnParseOption
+
+    fnParseDeviceList "${_args[@]}"
+    fnGetInfo_devicePtList=("${rtnParseDeviceList_pt[@]}")
+    fnGetInfo_deviceList=("${rtnParseDeviceList_store[@]}")
+    fnGetInfo
+    echo "$rtnGetInfo"
 }
 
 
@@ -241,6 +276,156 @@ fnBlkidTable() {
 
     printf "$formatArgus" "DEVNAME" "${showList[@]}"
     printf "$formatArgus" "${arrInfo[@]}"
+}
+
+rtnGetInfo=""
+fnGetInfo() {
+    local val
+    local devId lsblkInfo
+    local gdiskInfo=""
+
+    devId=`fnBlkidTable "PTTYPE,UUID,PARTUUID" \
+        "${fnGetInfo_devicePtList[@]}" \
+        "${fnGetInfo_deviceList[@]}"`
+
+    if [ ${#fnGetInfo_devicePtList[@]} -ne 0 ]; then
+        for val in "${fnGetInfo_devicePtList[@]}"
+        do
+            [ -n "$gdiskInfo" ] && gdiskInfo+=$_br$_br
+            gdiskInfo+="# $val"
+            gdiskInfo+=$_br`sgdisk -p "$val"`
+        done
+    else
+        gdiskInfo="# 不包含分區表裝置"
+    fi
+
+    lsblkInfo=`fnBlkidTable \
+        "PTTYPE,TYPE,LABEL,UUID,PARTLABEL,PARTUUID" \
+        "${fnGetInfo_devicePtList[@]}" \
+        "${fnGetInfo_deviceList[@]}"`
+
+    fnGetInfo_mountDevice "${fnGetInfo_deviceList[@]}"
+    fnGetInfo_MdForm "$devId" "$gdiskInfo" "$lsblkInfo" \
+        "$fnGetInfo_du" "$fnGetInfo_fstab"
+}
+fnGetInfo_devicePtList=()
+fnGetInfo_deviceList=()
+fnGetInfo_du=""
+fnGetInfo_fstab=""
+fnGetInfo_mountDevice() {
+    if [ -z "$*" ]; then
+        fnGetInfo_du="# 不包含儲存裝置"
+        fnGetInfo_fstab="# 不包含根目錄裝置"
+        return
+    fi
+
+    fnCheckMountState "$@"
+
+    local tmp val fstabPath
+    local mountDevPath="/tmp/mountDev.tmp"
+    local canNotmount=0
+    local canNotumount=0
+    local mountList=()
+    local dfInfo=""
+    local fstabInfo=""
+
+    if [ -e "$mountDevPath" ]; then
+        Loxog err "請搬移 \"$mountDevPath\" 目錄或文件供暫時的掛載使用。"
+        exit 1
+    fi
+    mkdir "$mountDevPath"
+
+    for val in "$@"
+    do
+        tmp="$mountDevPath/$val"
+        mkdir -p "$tmp"
+        mount "$val" "$tmp"
+        [ $? -ne 0 ] && canNotmount=1 && Loxog err "無法掛載 \"$val\" 裝置。"
+        [ $canNotumount -ne 0 ] && continue
+        mountList[ ${#mountList[@]} ]=$tmp
+
+        fstabPath="$tmp/etc/fstab"
+        [ ! -f "$fstabPath" ] && continue
+        [ -n "$fstabInfo" ] && fstabInfo+=$_br$_br
+        fstabInfo+="## $val"
+        fstabInfo+=$_br`cat "$fstabPath"`
+    done
+    [ $canNotmount -ne 0 ] \
+        && Loxog err "請卸載 \"$mountDevPath\" 下的掛載裝置。" \
+        && exit 1
+
+    [ -z "$fstabInfo" ] && fstabInfo="# 不包含根目錄裝置"
+    dfInfo=`df -h \
+        --output=source,fstype,size,used,avail,pcent,target \
+        "${mountList[@]}"`
+    tmp=`echo "$PWD" | sed 's/\//\\\\\//g'`
+    dfInfo=`echo "$dfInfo" | sed "s/$tmp//"`
+
+
+    for val in "$@"
+    do
+        umount "$mountDevPath/$val"
+        [ $? -ne 0 ] && canNotumount=1
+    done
+
+    if [ $canNotumount -eq 0 ]; then
+        rm -rf "$mountDevPath"
+    else
+        Loxog err "無法卸載 \"$mountDevPath\" 下的掛載裝置。"
+        exit 1
+    fi
+
+    fnGetInfo_du="$dfInfo"
+    fnGetInfo_fstab="$fstabInfo"
+}
+fnGetInfo_MdForm() {
+    local devId="$1"
+    local gdiskInfo="$2"
+    local lsblkInfo="$3"
+    local dfInfo="$4"
+    local fstabInfo="$5"
+
+    local tmp
+    local helPre="\`\`\`"
+    local txtForm=""
+
+    fnOneMsg() {
+        local title="$1"
+        local msg="$2"
+
+        local txtAns=""
+        txtAns+="**$title**："
+        txtAns+=$_br
+        txtAns+=$_br$helPre
+        txtAns+=$_br$msg
+        txtAns+=$_br$helPre
+        txtAns+=$_br
+
+        echo "$txtAns"
+    }
+
+    txtForm+="裝置資訊"
+    txtForm+=$_br"======="
+    txtForm+=$_br$_br
+    txtForm+=$_br"> 主機識別碼："
+    txtForm+=$_br"> $helPre"
+    txtForm+=$_br"`echo "$devId" | sed "s/\(.*\)/> \1/"`"
+    # txtForm+=$_br`echo "$devId" | sed "s/\(.*\)/> \1/"`
+    txtForm+=$_br"> $helPre"
+    txtForm+=$_br$_br$_br
+    tmp=`uname -a`
+    txtForm+=`fnOneMsg "uname -a" "$tmp"`
+    txtForm+=$_br$_br
+    txtForm+=`fnOneMsg "sgdisk -p" "$gdiskInfo"`
+    txtForm+=$_br$_br
+    txtForm+=`fnOneMsg "lsbik" "$lsblkInfo"`
+    txtForm+=$_br$_br
+    txtForm+=`fnOneMsg "df" "$dfInfo"`
+    txtForm+=$_br$_br
+    txtForm+=`fnOneMsg "cat /etc/fstab" "$fstabInfo"`
+    txtForm+=$_br
+
+    rtnGetInfo=$txtForm
 }
 
 
