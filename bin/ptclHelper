@@ -117,6 +117,7 @@ fnMain_info() {
 
 fnHelp_backup_briefly="顯示備份或還原的相關文件。"
 fnHelp_backup() { echo "# $fnHelp_backup_briefly
+$help_partcloneOptExplain
 [[USAGE]] <備份儲存位置> $help_allowDevice
 [[OPT]]
   -i, --info                 $fnHelp_info_briefly
