@@ -371,6 +371,31 @@ fnRandomStr() {
 }
 fnRandomStr_count16="0123456789ABCDEF"
 
+rtnLsList=()
+fnLsList() {
+    local txt len idx val valA
+    local list
+    list=()
+
+    len=`ls -1 $val 2> /dev/null | cat`
+    for valA in "$@"
+    do
+        txt=`ls -1 $valA 2> /dev/null`
+        [ $? -ne 0 ] && continue
+
+        len=`ls -1 $valA | wc -l`
+        [ $len -eq 0 ] && continue
+
+        for idx in `seq 1 $len`
+        do
+            val=`echo "$txt" | sed -n "${idx}p"`
+            list[ ${#list[@]} ]=$val
+        done
+    done
+
+    rtnLsList=("${list[@]}")
+}
+
 fnCheckMountState() {
     [ -z "$*" ] && return
     [ $fnCheckMountState_hasCheck -eq 1 ] && return
@@ -705,15 +730,13 @@ fnBackupCode_single() {
 ##shStyle 腳本環境
 
 
-[ -L "$0" ] && exec "`realpath "$0"`" "$@"
-
 __filename=`realpath "$0"`
 _dirsh=`dirname "$__filename"`
 [ "$_originPlace" == "bin" ] && _binsh=$_dirsh || _binsh=`realpath "$_dirsh/../../bin"`
 [ "$_originPlace" == "bin" ] && _libsh=`realpath "$_dirsh/../lib"` || _libsh=`realpath "$_dirsh/.."`
 _fileName=`basename "$0"`
 
-_IFS=$IFS
+_PWD=$PWD
 _br="
 "
 
@@ -731,7 +754,7 @@ Loxog() {
     local _stdin=`[ ! -t 0 ] && { \
         IFS='';
         while read pipeData; do echo "$pipeData"; done <&0;
-        IFS=$_IFS;
+        unset IFS
     }`
     local method="$1"; shift
 
@@ -760,6 +783,10 @@ Loxog() {
 
 ##shStyle ###
 
+
+[ -L "$0" ] && exec "`realpath "$0"`" "$@"
+
+trap 'sh -c "$_exit_Cc"' 2; _exit_Cc_cmd=""
 
 _stdin=`[ ! -t 0 ] && while read pipeData; do echo $pipeData; done <&0`
 
