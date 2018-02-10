@@ -20,7 +20,6 @@ _shScript() {
     case "$1" in
     blkid  ) _shCmdLevel=1 ;;
     info   ) _shCmdLevel=1 ;;
-    backup ) _shCmdLevel=1 ;;
     wrap   ) _shCmdLevel=1 ;;
     md5    ) _shCmdLevel=1 ;;
     esac
@@ -36,15 +35,19 @@ $help_partcloneOptExplain
 [[SUBCMD]]
   blkid     $fnHelp_blkid_briefly
   info      $fnHelp_info_briefly
-  backup    $fnHelp_backup_briefly
   wrap      $fnHelp_wrap_briefly
   md5       $fnHelp_md5_briefly
 [[OPT]]
+      --preview              預覽將被執行的命令。
 $help_partcloneOpt
   -h, --help                 幫助。
 "; }
 fnOpt_main() {
     case "$1" in
+        --preview )
+            opt_preview=1
+            return 1
+            ;;
         -h | --help ) fnShowHelp ;;
         * ) fnOpt_partcloneOpt "$@" ;;
     esac
@@ -52,82 +55,115 @@ fnOpt_main() {
 fnMain() {
     [ $# -eq 0 ] && fnShowHelp
 
+    opt_preview=0
     opt_partcloneOpt=""
     fnParseOption
 
     local tmp
     local dirPath="${_args[0]}"
 
-    if [ -z "$dirPath" ]; then
-        Loxog err "未指定備份儲存位置。"
+    fnCheckDirPath() {
+        [ -z "$dirPath" ] && Loxog err "未指定備份儲存位置。" && exit 1
+
+        [ ! -e "$dirPath" ] && return
+        [ -d "$dirPath" ] && [ -z "`ls -A "$dirPath"`" ] && return
+
+        Loxog err "指定的備份位置存在文件或不為空目錄。"
         exit 1
-    elif [ -e "$dirPath" ] && [ ! -d "$dirPath" ]; then
-        Loxog err "指定的備份位置存在文件。"
-        exit 1
-    elif [ -d "$dirPath" ] && [ -n "`ls -A "$dirPath"`" ]; then
-        Loxog err "指定的備份位置不為空目錄。"
-        exit 1
-    fi
+    }
+    fnCheckDirPath
 
     fnParseDeviceList "${_args[@]:1}"
     local devicePtList=("${rtnParseDeviceList_pt[@]}")
     local deviceList=("${rtnParseDeviceList_store[@]}")
 
-    local mdInfo
-    local shHead="#!/bin/bash$_br#$_br"
-    local pathTxt=""
-    local shCodeTxt=""
-    local restoreGptSh=""
-    local cloneGptSh=""
-    local restoreSh=""
-    local cloneSh=""
+    local mdInfo pathTxt
+    tmp="#!/bin/bash$_br#$_br"
+    local restoreSh=$tmp
+    local cloneSh=$tmp
 
-    fnTxtPathForm() {
-        [ -n "$pathTxt" ] && pathTxt+=$_br
-        pathTxt+="─┬ $1"
-        pathTxt+=$_br" ├── 還原 -> $dirPath/$2.sh"
-        pathTxt+=$_br" └── 備份 -> $dirPath/$3.sh"
+    pathTxt="──┬ 備份儲存位置 -> $PWD/$dirPath"
+    pathTxt+=$_br"  ├── .$_fileName.tmp   暫存的未完成紀錄"
+    pathTxt+=$_br"  ├── partclone.log   備份工具的日誌"
+    fnPathForm() {
+        pathTxt+=$_br"  "
+        case "$1" in
+            hostInfo ) pathTxt+="├── hostInfo.txt   裝置資訊" ;;
+            shCode )
+                pathTxt+="├── restore.sh   還原腳本"$_br"  "
+                pathTxt+="├── clone.sh   備份腳本"
+                ;;
+            deviceFile ) pathTxt+="├── deviceFile_*   裝置文件（備份裝置資料）" ;;
+            wrapDeviceFile )
+                pathTxt+="├─┬ wrapDeviceFile/   打包裝置文件"$_br"  "
+                pathTxt+="│ └── deviceFile.tar.gz.*   壓縮分段的裝置文件"
+                ;;
+            md5 )
+                pathTxt+="├── deviceFile.md5   裝置文件校驗碼"$_br"  "
+                pathTxt+="└── wrapDeviceFile.md5   打包裝置文件校驗碼"
+                ;;
+        esac
     }
 
+    Loxog com "讀取 備份、還原腳本資訊"
     if [ ${#devicePtList[@]} -ne 0 ]; then
-        fnTxtPathForm "分區表裝置" "restoreGpt" "cloneGpt"
         fnBackupCode GPT "" "${devicePtList[@]}"
-        restoreGptSh=$shHead"$rtnBackupCode_restore"
-        cloneGptSh=$shHead"$rtnBackupCode_clone"
+        restoreSh+="$rtnBackupCode_restore"
+        cloneSh+="$rtnBackupCode_clone"
     fi
     if [ ${#deviceList[@]} -ne 0 ]; then
-        fnTxtPathForm "儲存裝置" "restore" "clone"
+        [ -n "$restoreSh" ] && restoreSh+=$_br && cloneSh+=$_br
+
         fnBackupCode store "$opt_partcloneOpt" "${deviceList[@]}"
-        restoreSh=$shHead"$rtnBackupCode_restore"
-        cloneSh=$shHead"$rtnBackupCode_clone"
+        restoreSh+="$rtnBackupCode_restore"
+        cloneSh+="$rtnBackupCode_clone"
     fi
 
-    tmp="留存裝置資訊"
-    printf "$tmp ( 讀取中 ... )"
-    fnGetInfo_devicePtList=("${devicePtList[@]}")
-    fnGetInfo_deviceList=("${deviceList[@]}")
-    fnGetInfo
-    mdInfo=$rtnGetInfo
-    pathTxt="── 裝置資訊 -> $dirPath/hostInfo.txt"$_br$pathTxt
-    printf "\r\e[K%s\n\n" "$tmp ( 成功 )"
-
-    if [ ! -d "$dirPath" ]; then
-        mkdir -p "$dirPath"
-        tmp=$?; [ $tmp -ne 0 ] && exit $tmp
+    Loxog com "讀取 裝置資訊"
+    if [ $opt_preview -eq 0 ]; then
+        fnGetInfo_devicePtList=("${devicePtList[@]}")
+        fnGetInfo_deviceList=("${deviceList[@]}")
+        fnGetInfo
+        mdInfo=$rtnGetInfo
     fi
 
-    echo "$pathTxt"
-    echo "$mdInfo" > "$dirPath/hostInfo.txt"
-    if [ -n "$restoreGptSh" ]; then
-        echo "$restoreGptSh" > "$dirPath/restoreGpt.sh"
-        echo "$cloneGptSh" > "$dirPath/cloneGpt.sh"
-        chmod 755 "$dirPath/restoreGpt.sh" "$dirPath/cloneGpt.sh"
+    echo
+
+    Loxog com "建立備份目錄"
+    if [ $opt_preview -eq 0 ]; then
+        if [ ! -d "$dirPath" ]; then
+            mkdir -p "$dirPath"
+            tmp=$?; [ $tmp -ne 0 ] && exit $tmp
+        fi
+    else
+        Loxog war '```' "-> $dirPath" '```'"$_br"
     fi
-    if [ -n "$restoreSh" ]; then
+
+    Loxog com "寫入裝置資訊"
+    [ $opt_preview -eq 0 ] \
+        && echo "$mdInfo" > "$dirPath/hostInfo.txt" \
+        || Loxog war '```' "`echo '請查看 \`./'$_fileName' info '${_args[*]:1}'\`'`" '```'"$_br"
+    fnPathForm "hostInfo"
+
+    Loxog com "寫入備份、還原腳本"
+    if [ $opt_preview -eq 0 ]; then
         echo "$restoreSh" > "$dirPath/restore.sh"
         echo "$cloneSh" > "$dirPath/clone.sh"
         chmod 755 "$dirPath/restore.sh" "$dirPath/clone.sh"
+    else
+        Loxog war '```' "## $dirPath/restore.sh"
+        echo "$restoreSh" | Loxog com
+        Loxog war "$_br## $dirPath/restore.sh"
+        echo "$cloneSh" | Loxog com
+        Loxog war '```'
     fi
+    fnPathForm "shCode"
+
+    # fnPathForm "deviceFile"
+    # fnPathForm "wrapDeviceFile"
+    # fnPathForm "md5"
+    echo
+    echo "$pathTxt" | Loxog com
 }
 
 fnHelp_blkid_briefly="顯示 \`blkid\` 資訊。"
@@ -183,93 +219,6 @@ fnMain_info() {
     fnGetInfo_deviceList=("${rtnParseDeviceList_store[@]}")
     fnGetInfo
     echo "$rtnGetInfo"
-}
-
-fnHelp_backup_briefly="顯示備份或還原的相關文件。"
-fnHelp_backup() { echo "# $fnHelp_backup_briefly
-$help_partcloneOptExplain
-[[USAGE]] <備份儲存位置> $help_allowDevice
-[[OPT]]
-  -i, --info                 $fnHelp_info_briefly
-$help_partcloneOpt
-  -h, --help                 幫助。
-"; }
-fnOpt_backup() {
-    case "$1" in
-        -i | --info )
-            opt_Info=1
-            return 1
-            ;;
-        -h | --help ) fnShowHelp ;;
-        * ) fnOpt_partcloneOpt "$@" ;;
-    esac
-}
-fnMain_backup() {
-    [ $# -eq 0 ] && fnShowHelp
-
-    opt_Info=0
-    opt_partcloneOpt=""
-    fnParseOption
-
-    local tmp
-    local dirPath="${_args[0]}"
-
-    [ -z "$dirPath" ] \
-        && Loxog err "未指定備份儲存位置。" \
-        && exit 1
-
-    fnParseDeviceList "${_args[@]:1}"
-    local devicePtList=("${rtnParseDeviceList_pt[@]}")
-    local deviceList=("${rtnParseDeviceList_store[@]}")
-
-    local shHead="#!/bin/bash$_br#$_br"
-    local pathTxt=""
-    local shCodeTxt=""
-
-    fnTxtForm() {
-        local method="$1"
-        case "$method" in
-            path )
-                [ -n "$pathTxt" ] && pathTxt+=$_br
-                pathTxt+="─┬ $4"
-                pathTxt+=$_br" ├── 還原 -> $dirPath/$2.sh"
-                pathTxt+=$_br" └── 備份 -> $dirPath/$3.sh"
-                ;;
-            code )
-                [ -n "$shCodeTxt" ] && shCodeTxt+=$_br$_br
-                shCodeTxt+="## $dirPath/$2.sh"$_br$shHead$4
-                shCodeTxt+=$_br$_br
-                shCodeTxt+="## $dirPath/$3.sh"$_br$shHead$5
-                ;;
-        esac
-    }
-
-    if [ ${#devicePtList[@]} -ne 0 ]; then
-        fnTxtForm path "restoreGpt" "cloneGpt" "分區表裝置"
-
-        fnBackupCode GPT "" "${devicePtList[@]}"
-        fnTxtForm code "restoreGpt" "cloneGpt" \
-            "$rtnBackupCode_restore" "$rtnBackupCode_clone"
-    fi
-    if [ ${#deviceList[@]} -ne 0 ]; then
-        fnTxtForm path "restore" "clone" "儲存裝置"
-
-        fnBackupCode store "$opt_partcloneOpt" "${deviceList[@]}"
-        fnTxtForm code "restore" "clone" \
-            "$rtnBackupCode_restore" "$rtnBackupCode_clone"
-    fi
-
-    if [ $opt_Info -eq 1 ]; then
-        printf "留存裝置資訊 ( 讀取中 ... )"
-        fnGetInfo_devicePtList=("${devicePtList[@]}")
-        fnGetInfo_deviceList=("${deviceList[@]}")
-        fnGetInfo
-        pathTxt="── 裝置資訊 -> $dirPath/hostInfo.txt"$_br$pathTxt
-        printf "\r\e[K%s\n" "$rtnGetInfo"
-        for tmp in {1..9}; do printf "=-------"; done; echo -e "=\n\n"
-    fi
-
-    echo "$pathTxt$_br$_br"'```'"$_br$shCodeTxt$_br"'```'
 }
 
 fnHelp_wrap_briefly="壓縮、分段及還原。"
