@@ -21,6 +21,8 @@ _shScript() {
     blkid  ) _shCmdLevel=1 ;;
     info   ) _shCmdLevel=1 ;;
     backup ) _shCmdLevel=1 ;;
+    wrap   ) _shCmdLevel=1 ;;
+    md5    ) _shCmdLevel=1 ;;
     esac
 }
 
@@ -35,6 +37,8 @@ $help_partcloneOptExplain
   blkid     $fnHelp_blkid_briefly
   info      $fnHelp_info_briefly
   backup    $fnHelp_backup_briefly
+  wrap      $fnHelp_wrap_briefly
+  md5       $fnHelp_md5_briefly
 [[OPT]]
 $help_partcloneOpt
   -h, --help                 幫助。
@@ -210,10 +214,9 @@ fnMain_backup() {
     local tmp
     local dirPath="${_args[0]}"
 
-    if [ -z "$dirPath" ]; then
-        Loxog err "未指定備份儲存位置。"
-        exit 1
-    fi
+    [ -z "$dirPath" ] \
+        && Loxog err "未指定備份儲存位置。" \
+        && exit 1
 
     fnParseDeviceList "${_args[@]:1}"
     local devicePtList=("${rtnParseDeviceList_pt[@]}")
@@ -267,6 +270,118 @@ fnMain_backup() {
     fi
 
     echo "$pathTxt$_br$_br"'```'"$_br$shCodeTxt$_br"'```'
+}
+
+fnHelp_wrap_briefly="壓縮、分段及還原。"
+fnHelp_wrap() { echo "# $fnHelp_wrap_briefly
+# \`split\` 相關選項可以查看 \`man split\` 說明。
+[[USAGE]] <備份目錄位置>
+[[OPT]]
+  -r, --restore-wrqp       將分段的裝置文件還原。
+  -a, --average <sizeMB>   均分分段文件，以 MB 為單位。 預設選項，值為 256MB。
+  -b, --bytes <size>       以大小分段文件。 \`split\` 相關選項。
+  -n, --number <chunks>    以數量分段文件。 \`split\` 相關選項。
+  -h, --help               幫助。
+"; }
+fnOpt_wrap() {
+    case "$1" in
+        -r | --restore-wrap )
+            opt_restoreWrap=1
+            return 1
+            ;;
+        -a | --average )
+            [ "$opt_average" -le 0 2> /dev/null ] && return 4
+
+            [ -n "$2" ] \
+                && opt_average=$2 \
+                || opt_average=256
+            return 2
+            ;;
+        -b | --bytes | -n | --number )
+            [ -z "$2" ] && return 4
+
+            opt_splitOpt+=" $1 $2"
+            return 2
+            ;;
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_wrap() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_restoreWrap=0
+    opt_average=""
+    opt_splitOpt=""
+    fnParseOption
+
+    local dirPath="${_args[0]}"
+
+    fnCheckIsBackupDir "$dirPath"
+
+    cd "$dirPath"
+
+    [ $opt_restoreWrap -eq 1 ] \
+        && fnSplitFile_restore \
+        || fnSplitFile 0 "$opt_splitOpt" "$opt_average"
+
+    cd "$_PWD"
+}
+
+fnHelp_md5_briefly="建立校驗碼。"
+fnHelp_md5() { echo "# $fnHelp_md5_briefly
+[[USAGE]] <備份目錄位置>
+[[OPT]]
+  -s, --show    顯示更新的校驗碼。
+  -w, --write   將校驗碼寫入文件。
+  -h, --help    幫助。
+"; }
+fnOpt_md5() {
+    case "$1" in
+        -s | --show )
+            opt_show=1
+            return 1
+            ;;
+        -w | --write )
+            opt_write=1
+            return 1
+            ;;
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_md5() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_show=0
+    opt_write=0
+    fnParseOption
+
+    local tmp
+    local backupList
+    local dirPath="${_args[0]}"
+
+    fnCheckIsBackupDir "$dirPath"
+
+    cd "$dirPath"
+
+    if [ "$opt_write" -eq 1 ]; then
+        fnMd5sum_deviceFile
+        fnMd5sum_splitDeviceFile
+    elif [ "$opt_show" -eq 1 ]; then
+        fnMd5sum_deviceFile 0
+        echo
+        fnMd5sum_splitDeviceFile 0
+    else
+        tmp=1
+        fnMd5sum_checkDeviceFile
+        [ $? -eq 0 ] && tmp=0
+        fnMd5sum_checkSplitDeviceFile
+        [ $? -eq 0 ] && tmp=0
+        [ $tmp -eq 1 ] && fnShowHelp
+    fi
+
+    cd "$_PWD"
 }
 
 
@@ -394,6 +509,15 @@ fnLsList() {
     done
 
     rtnLsList=("${list[@]}")
+}
+
+fnCheckIsBackupDir() {
+    local dirPath="$1"
+
+    local tmp='找不到 "hostInfo.txt" 文件，判斷不為備份相關目錄。'
+    [ ! -f "$dirPath/hostInfo.txt" ] \
+        && Loxog err '"'$dirPath'" 位置'$tmp \
+        && exit 1
 }
 
 fnCheckMountState() {
@@ -724,6 +848,173 @@ fnBackupCode_single() {
 
     fnBackupCode_singleRestore=$restoreCode
     fnBackupCode_singleClone=$cloneCode
+}
+
+# 需在備份儲存目錄下執行
+fnSplitFile() {
+    local quiet=$1
+    local splitOpt="$2"
+    local optAverage=$3
+
+    [ -z "$quiet" ] && quiet=0
+
+    local backupList
+    local tarName="deviceFile.tar.gz"
+    local storeDirName="splitDeviceFile"
+
+    local tmpMsg=""
+    fnLogProcess() {
+        [ $quiet -eq 1 ] && return
+
+        [ "$1" == "clear" ] \
+            && printf "\r\e[K%s\n" "$tmpMsg $2" \
+            && return
+
+        printf "$1 $2"
+        tmpMsg="$1"
+    }
+
+    fnLsList "partitionData_*.gpt" "device_*.ptcl.img"
+    backupList=("${rtnLsList[@]}")
+
+    [ ${#backupList[@]} -eq 0 ] \
+        && Loxog err '找不到需要分段的文件。' \
+        && exit 1
+
+    fnSplitFile_mkdirSplitDevice "$storeDirName"
+
+    fnLogProcess "打包並壓縮備份文件" "( ... )"
+    # 使用 split -n 選項時需知道文件大小 故無法同過管道一段段地建立。
+    # tar -czf - <file ...> | split -b <size> - <prefixName>
+    _exit_Cc_cmd+=" [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
+    tar -czf "$tarName.tmp" "${backupList[@]}"
+    fnLogProcess "clear" "( 成功 )"
+
+    if [ -z "$splitOpt" ]; then
+        splitOpt=" -n `fnSplitFile_getOptAverage $optAverage "$tarName.tmp"`"
+    fi
+
+    fnLogProcess "分段文件" "( ... )"
+    split $splitOpt "$tarName.tmp" "$storeDirName/$tarName."
+    fnLogProcess "clear" "( 成功 )"
+    fnLogProcess "移除打包文件" "( ... )"
+    rm "$tarName.tmp"
+    fnLogProcess "clear" "( 成功 )"
+
+    fnLogProcess "建立校驗碼" "( ... )"
+    fnMd5sum_splitDeviceFile > /dev/null
+    fnLogProcess "clear" "( 成功 )"
+}
+fnSplitFile_mkdirSplitDevice() {
+    local dirName="$1"
+
+    [ ! -e "$dirName" ] \
+        && mkdir "$dirName" && return
+
+    if [ ! -d "$dirName" ] || [ -z "`ls -A "$dirName"`" ]; then
+        mkdir "$dirName"
+        return
+    fi
+
+    Loxog err "請空出 \"$PWD/$dirName\" 位置供分段文件儲放。"
+    exit 1
+}
+fnSplitFile_getOptAverage() {
+    local tmp
+    local average=$1            # $1 > 0
+    local sourceFilePath="$2"
+
+    local totalSize
+
+    [ -z "$average" ] && average=256
+
+    tmp=`du --apparent-size "$sourceFilePath" | cut -f 1`
+    totalSize=$[ $tmp >> 10 ]
+
+    (( tmp= $totalSize / $average ))
+    [ $(( $totalSize % $average )) -ne 0 ] && (( tmp++ ))
+    echo $tmp
+}
+fnSplitFile_restore() {
+    local quiet=$1
+
+    [ -z "$quiet" ] && quiet=0
+
+    local tarName="deviceFile.tar.gz"
+    local storeDirName="splitDeviceFile"
+
+    local tmpMsg=""
+    fnLogProcess() {
+        [ $quiet -eq 1 ] && return
+
+        [ "$1" == "clear" ] \
+            && printf "\r\e[K%s\n" "$tmpMsg $2" \
+            && return
+
+        printf "$1 $2"
+        tmpMsg="$1"
+    }
+
+    fnMd5sum_checkSplitDeviceFile
+
+    [ -z "`ls $storeDirName/$tarName.* 2> /dev/null`" ] \
+        && Loxog err '找不到需要分段的文件。' \
+        && exit 1
+
+    fnLogProcess "還原分段文件" "( ... )"
+    _exit_Cc_cmd+=" [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
+    cat $storeDirName/$tarName.* > "$tarName.tmp"
+    fnLogProcess "clear" "( 成功 )"
+
+    fnLogProcess "解壓縮備份文件" "( ... )"
+    tar -xzf "$tarName.tmp"
+    fnLogProcess "clear" "( 成功 )"
+
+    fnLogProcess "移除打包文件" "( ... )"
+    rm "$tarName.tmp"
+    fnLogProcess "clear" "( 成功 )"
+}
+
+# 需在備份儲存目錄下執行
+fnMd5sum_deviceFile() {
+    local bisWrite=$1
+
+    fnLsList hostInfo.txt cloneGpt.sh clone.sh restoreGpt.sh restore.sh \
+        "partitionData_*.gpt" "device_*.ptcl.img"
+    [ ${#rtnLsList[@]} -eq 0 ] && return 2
+    [ "$bisWrite" == 0 ] \
+        && md5sum "${rtnLsList[@]}" \
+        || md5sum "${rtnLsList[@]}" | tee "deviceFile.md5"
+}
+fnMd5sum_splitDeviceFile() {
+    local bisWrite=$1
+    local splitDeviceFiles="splitDeviceFile/deviceFile.tar.gz.*"
+
+    [ -z "`ls $splitDeviceFiles 2> /dev/null`" ] && return 2
+
+    [ "$bisWrite" == 0 ] \
+        && md5sum $splitDeviceFiles \
+        || md5sum $splitDeviceFiles | tee "splitDeviceFile.md5"
+}
+fnMd5sum_checkDeviceFile() {
+    local md5File="deviceFile.md5"
+
+    [ ! -f "$md5File" ] && return 2
+
+    printf "\n比對校驗碼\n"
+    md5sum -c "$md5File"
+    [ $? -ne 0 ] && Loxog err "校驗碼錯誤。" && exit 1
+    echo
+}
+fnMd5sum_checkSplitDeviceFile() {
+    local md5File="splitDeviceFile.md5"
+
+    [ ! -f "$md5File" ] && return 2
+
+    printf "\n比對校驗碼\n"
+    md5sum -c "$md5File"
+    [ $? -ne 0 ] && Loxog err "校驗碼錯誤。" && exit 1
+    echo
 }
 
 
