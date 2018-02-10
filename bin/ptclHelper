@@ -881,12 +881,13 @@ fnSplitFile() {
         && Loxog err '找不到需要分段的文件。' \
         && exit 1
 
+    _onCtrlC " [ -f 'splitDeviceFile.md5' ] || rm -rf '$storeDirName'"
     fnSplitFile_mkdirSplitDevice "$storeDirName"
 
     fnLogProcess "打包並壓縮備份文件" "( ... )"
     # 使用 split -n 選項時需知道文件大小 故無法同過管道一段段地建立。
     # tar -czf - <file ...> | split -b <size> - <prefixName>
-    _exit_Cc_cmd+=" [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
+    _onCtrlC " [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
     tar -czf "$tarName.tmp" "${backupList[@]}"
     fnLogProcess "clear" "( 成功 )"
 
@@ -962,7 +963,7 @@ fnSplitFile_restore() {
         && exit 1
 
     fnLogProcess "還原分段文件" "( ... )"
-    _exit_Cc_cmd+=" [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
+    _onCtrlC " [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
     cat $storeDirName/$tarName.* > "$tarName.tmp"
     fnLogProcess "clear" "( 成功 )"
 
@@ -1077,7 +1078,15 @@ Loxog() {
 
 [ -L "$0" ] && exec "`realpath "$0"`" "$@"
 
-trap 'sh -c "$_exit_Cc"' 2; _exit_Cc_cmd=""
+_onCtrlC() {
+    local val
+    for val in "$@"
+    do
+        _onCtrlC_cmd+=$val$_br
+    done
+    trap 'sh -c "echo ; $_onCtrlC_cmd echo"; exit' 2
+}
+_onCtrlC_cmd=""
 
 _stdin=`[ ! -t 0 ] && while read pipeData; do echo $pipeData; done <&0`
 
