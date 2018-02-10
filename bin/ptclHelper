@@ -1053,8 +1053,9 @@ Loxog() {
     local color formatArgus
 
     case $method in
-        war ) color=$_fYelB ;;
-        err ) color=$_fRedB ;;
+        com ) color=$_fN    ;; # common
+        war ) color=$_fYelB ;; # warn
+        err ) color=$_fRedB ;; # error
     esac
 
     formatArgus="$color%s$_fN\n"
