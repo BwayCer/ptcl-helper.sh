@@ -31,6 +31,7 @@ _shScript() {
 
 fnHelp_main() { echo "# 備份小幫手，通過 sgdisk 及 partclone 備份裝置。
 $help_partcloneOptExplain
+$help_splitOptExplain
 [[USAGE]] <備份儲存位置> $help_allowDevice
 [[SUBCMD]]
   blkid     $fnHelp_blkid_briefly
@@ -40,16 +41,25 @@ $help_partcloneOptExplain
 [[OPT]]
       --preview              預覽將被執行的命令。
 $help_partcloneOpt
+$help_splitOpt
   -h, --help                 幫助。
 "; }
 fnOpt_main() {
+    local tmp
+
+    fnOpt_partcloneOpt "$@"
+    tmp=$?; [ $tmp -ne 0 ] && return $tmp
+
+    fnOpt_splitOpt "$@"
+    tmp=$?; [ $tmp -ne 0 ] && return $tmp
+
     case "$1" in
         --preview )
             opt_preview=1
             return 1
             ;;
         -h | --help ) fnShowHelp ;;
-        * ) fnOpt_partcloneOpt "$@" ;;
+        * ) return 3 ;;
     esac
 }
 fnMain() {
@@ -57,6 +67,8 @@ fnMain() {
 
     opt_preview=0
     opt_partcloneOpt=""
+    opt_average=""
+    opt_splitOpt=""
     fnParseOption
 
     local tmp
@@ -225,14 +237,12 @@ fnMain_info() {
 
 fnHelp_wrap_briefly="壓縮、分段及還原。"
 fnHelp_wrap() { echo "# $fnHelp_wrap_briefly
-# \`split\` 相關選項可以查看 \`man split\` 說明。
+$help_splitOptExplain
 [[USAGE]] <備份目錄位置>
 [[OPT]]
-  -r, --restore-wrqp       將分段的裝置文件還原。
-  -a, --average <sizeMB>   均分分段文件，以 MB 為單位。 預設選項，值為 256MB。
-  -b, --bytes <size>       以大小分段文件。 \`split\` 相關選項。
-  -n, --number <chunks>    以數量分段文件。 \`split\` 相關選項。
-  -h, --help               幫助。
+  -r, --restore-wrqp         將分段的裝置文件還原。
+$help_splitOpt
+  -h, --help                 幫助。
 "; }
 fnOpt_wrap() {
     case "$1" in
@@ -362,8 +372,6 @@ help_partcloneOpt="
   -f, --UI-fresh <sec>       Fresh times of progress.  \`partclone\` 相關選項。
   -z, --buffer_size <size>   讀取或寫入的緩衝區大小。 預設為 1048576。
                              \`partclone\` 相關選項。
-  -q, --quiet                無聲模式。 停用進度訊息顯示。
-                             \`partclone\` 相關選項。
   -d, --debug <level>        設定除錯層級 [1|2|3]。 \`partclone\` 相關選項。
 "
 help_partcloneOpt=`echo "$help_partcloneOpt" | sed '1d' | sed '$d'`
@@ -371,9 +379,9 @@ fnOpt_partcloneOpt() {
     local tmp="$1"
     [ ${#tmp} -eq 2 ] && tmp=${tmp:1:1}
     case "$tmp" in
-        [DRCNXIFq] | --domain | --restore_raw_file | --rescue \
+        [DRCNXIF] | --domain | --restore_raw_file | --rescue \
             | --no_check | --ncurse | --dialog | --ignore_fschk \
-            | --ignore_crc | --force | --quiet )
+            | --ignore_crc | --force )
             opt_partcloneOpt+=" $1"
             return 1
             ;;
@@ -391,7 +399,32 @@ fnOpt_partcloneOpt() {
                 || opt_partcloneOpt+=" $1=$2"
             return 2
             ;;
-        * ) return 3 ;;
+    esac
+}
+
+help_splitOptExplain="# \`split\` 相關選項可以查看 \`man split\` 說明。"
+help_splitOpt="
+  -a, --average <sizeMB>     均分分段文件，以 MB 為單位。 預設選項，值為 256MB。
+  -b, --bytes <size>         以大小分段文件。 \`split\` 相關選項。
+  -n, --number <chunks>      以數量分段文件。 \`split\` 相關選項。
+"
+help_splitOpt=`echo "$help_splitOpt" | sed '1d' | sed '$d'`
+fnOpt_splitOpt() {
+    case "$1" in
+        -a | --average )
+            [ "$opt_average" -le 0 2> /dev/null ] && return 4
+
+            [ -n "$2" ] \
+                && opt_average=$2 \
+                || opt_average=256
+            return 2
+            ;;
+        -b | --bytes | -n | --number )
+            [ -z "$2" ] && return 4
+
+            opt_splitOpt+=" $1 $2"
+            return 2
+            ;;
     esac
 }
 
