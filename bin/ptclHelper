@@ -97,8 +97,9 @@ fnMain() {
     local cloneSh=$tmp
 
     pathTxt="──┬ 備份儲存位置 -> $PWD/$dirPath"
-    pathTxt+=$_br"  ├── .$_fileName.tmp   暫存的未完成紀錄"
-    pathTxt+=$_br"  ├── partclone.log   備份工具的日誌"
+    # pathTxt+=$_br"  ├── .$_fileName.tmp   [可忽略] 暫存的未完成紀錄"
+    pathTxt+=$_br"  ├── partclone.log   [可忽略] 備份工具的日誌"
+    pathTxt+=$_br"  ├── deviceFile.tar.gz   [可忽略] 裝置文件的壓縮文件"
     fnPathForm() {
         pathTxt+=$_br"  "
         case "$1" in
@@ -159,7 +160,9 @@ fnMain() {
     Loxog com "寫入裝置資訊"
     [ $opt_preview -eq 0 ] \
         && echo "$mdInfo" > "$dirPath/hostInfo.txt" \
-        || Loxog war '```' "`echo '請查看 \`./'$_fileName' info '${_args[*]:1}'\`'`" '```'"$_br"
+        || Loxog war '```' \
+            "`echo "裝置資訊請查看$_br./$_fileName info "${_args[*]:1}`" \
+            '```'"$_br"
     fnPathForm "hostInfo"
 
     Loxog com "寫入備份、還原腳本"
@@ -168,17 +171,41 @@ fnMain() {
         echo "$cloneSh" > "$dirPath/clone.sh"
         chmod 755 "$dirPath/restore.sh" "$dirPath/clone.sh"
     else
-        Loxog war '```' "## $dirPath/restore.sh"
+        Loxog war '```' "## 還原腳本 $dirPath/restore.sh"
         echo "$restoreSh" | Loxog com
-        Loxog war "$_br## $dirPath/restore.sh"
+        Loxog war "$_br## 備份腳本 $dirPath/restore.sh"
         echo "$cloneSh" | Loxog com
-        Loxog war '```'
+        Loxog war '```'"$_br"
     fi
     fnPathForm "shCode"
 
-    # fnPathForm "deviceFile"
-    # fnPathForm "wrapDeviceFile"
-    # fnPathForm "md5"
+    echo
+
+    Loxog com "備份裝置資料"
+    if [ $opt_preview -eq 0 ]; then
+        cd "$dirPath"
+        fnExecClone "$cloneSh" "${devicePtList[@]}" "${deviceList[@]}"
+        fnMd5sum_deviceFile > /dev/null
+        rm "./partclone.log"
+        cd "$_PWD"
+    else
+        Loxog war '```' "# PWD -> `realpath "$dirPath"`" "sh clone.sh" '```'"$_br"
+    fi
+    fnPathForm "deviceFile"
+
+    echo
+
+    Loxog com "打包裝置資料"
+    if [ $opt_preview -eq 0 ]; then
+        cd "$dirPath"
+        fnSplitFile 0 "$opt_splitOpt" "$opt_average"
+        cd "$_PWD"
+    else
+        Loxog war '```' "./$_fileName wrap $dirPath" '```'"$_br"
+    fi
+    fnPathForm "wrapDeviceFile"
+    fnPathForm "md5"
+
     echo
     echo "$pathTxt" | Loxog com
 }
@@ -832,6 +859,23 @@ fnBackupCode_single() {
 
     fnBackupCode_singleRestore=$restoreCode
     fnBackupCode_singleClone=$cloneCode
+}
+
+# 需在備份儲存目錄下執行
+fnExecClone() {
+    local len idx val
+    local cloneSh="$1"; shift
+
+    (( len= `echo "$cloneSh" | wc -l` ))
+    for (( idx=3 ; $idx < $len ; idx= $idx + 2 ))
+    do
+        echo
+        Loxog war "備份 $1 裝置 （ 3 秒後繼續 或 按 <確認鍵> 繼續 ）"
+        shift
+        read -t 3
+        val=`echo "$cloneSh" | sed -n "$idx,$(( $idx + 1 ))p"`
+        sh -c "$val"
+    done
 }
 
 # 需在備份儲存目錄下執行
