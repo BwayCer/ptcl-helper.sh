@@ -107,7 +107,10 @@ fnMain() {
                 pathTxt+="├── restore.sh   還原腳本"$_br"  "
                 pathTxt+="├── clone.sh   備份腳本"
                 ;;
-            deviceFile ) pathTxt+="├── deviceFile_*   裝置文件（備份裝置資料）" ;;
+            deviceFile )
+                pathTxt+="├── deviceFile_*.partitionData   裝置文件（備份分區數據）"$_br"  "
+                pathTxt+="├── deviceFile_*.img   裝置文件（備份裝置資料）"
+                ;;
             wrapDeviceFile )
                 pathTxt+="├─┬ wrapDeviceFile/   打包裝置文件"$_br"  "
                 pathTxt+="│ └── deviceFile.tar.gz.*   壓縮分段的裝置文件"
@@ -808,7 +811,7 @@ fnBackupCode_single() {
     tmpClone='[ -n "$1" ] && device="$1" || device="'`realpath "$device"`'"; shift;'
     case "$deviceType" in
         GPT )
-            name="./partitionData_`basename "$device"`.`fnRandomStr`.gpt"
+            name="./deviceFile_`basename "$device"`.`fnRandomStr`.gpt.partitionData"
             tmp=$_br'sgdisk '$customOpt
             tmpRestore+=$tmp
             tmpClone+=$tmp
@@ -818,7 +821,7 @@ fnBackupCode_single() {
         store )
             fsType=`blkid -o value -s TYPE "$device"`
             name=`basename "$device" | sed "s/\([^.]*\)\..*/\1/g"`
-            name="device_${name}_${fsType}.`fnRandomStr`.ptcl.img"
+            name="deviceFile_${name}_${fsType}.`fnRandomStr`.ptcl.img"
             tmp=$_br"partclone.$fsType"
             tmpRestore+=$tmp
             tmpClone+=$tmp
@@ -855,7 +858,7 @@ fnSplitFile() {
         tmpMsg="$1"
     }
 
-    fnLsList "partitionData_*.gpt" "device_*.ptcl.img"
+    fnLsList "deviceFile_*.gpt.partitionData" "deviceFile_*.ptcl.img"
     backupList=("${rtnLsList[@]}")
 
     [ ${#backupList[@]} -eq 0 ] \
@@ -874,7 +877,7 @@ fnSplitFile() {
 
     if [ -z "$splitOpt" ]; then
         splitOpt=" -n `fnSplitFile_getOptAverage "$optAverage" "$tarName.tmp"`"
-        [ $? -ne 0 ]; exit 1
+        [ $? -ne 0 ] && exit 1
     fi
 
     fnLogProcess "分段文件" "( ... )"
@@ -954,6 +957,8 @@ fnSplitFile_restore() {
     fnLogProcess "移除打包文件" "( ... )"
     rm "$tarName.tmp"
     fnLogProcess "clear" "( 成功 )"
+
+    fnMd5sum_checkDeviceFile
 }
 
 # 需在備份儲存目錄下執行
@@ -961,7 +966,7 @@ fnMd5sum_deviceFile() {
     local bisWrite=$1
 
     fnLsList hostInfo.txt clone.sh restore.sh \
-        "partitionData_*.gpt" "device_*.ptcl.img"
+        "deviceFile_*.gpt.partitionData" "deviceFile_*.ptcl.img"
     [ ${#rtnLsList[@]} -eq 0 ] && return 2
     [ "$bisWrite" == 0 ] \
         && md5sum "${rtnLsList[@]}" \
