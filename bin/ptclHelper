@@ -1058,12 +1058,6 @@ Loxog() {
     done
 }
 
-
-##shStyle ###
-
-
-[ -L "$0" ] && exec "`realpath "$0"`" "$@"
-
 _onCtrlC() {
     local val
     for val in "$@"
@@ -1073,6 +1067,12 @@ _onCtrlC() {
     trap 'sh -c "echo ; $_onCtrlC_cmd echo"; exit' 2
 }
 _onCtrlC_cmd=""
+
+
+##shStyle ###
+
+
+[ -L "$0" ] && exec "`realpath "$0"`" "$@"
 
 _stdin=`[ ! -t 0 ] && while read pipeData; do echo $pipeData; done <&0`
 
