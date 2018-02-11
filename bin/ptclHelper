@@ -73,6 +73,8 @@ fnMain() {
     }
     fnCheckDirPath
 
+    opt_partcloneOpt="--logfile ./partclone.log"$opt_partcloneOpt
+
     fnParseDeviceList "${_args[@]:1}"
     local devicePtList=("${rtnParseDeviceList_pt[@]}")
     local deviceList=("${rtnParseDeviceList_store[@]}")
@@ -347,9 +349,6 @@ help_partcloneOpt="
                              \`partclone\` 相關選項。
       --restore_raw_file     create special raw file for loop device.
                              \`partclone\` 相關選項。
-  -l, --logfile <logfile>    輸出 partclone 日誌訊息到指定路徑。
-                             預設為 /var/log/partclone.log。
-                             \`partclone\` 相關選項。
   -R, --rescue               即使有錯誤仍繼續執行。 \`partclone\` 相關選項。
   -C, --no_check             不要檢查設備的大小和可用空間。
                              \`partclone\` 相關選項。
@@ -378,7 +377,7 @@ fnOpt_partcloneOpt() {
             opt_partcloneOpt+=" $1"
             return 1
             ;;
-        [lfz] | --logfile | --UI-fresh | --buffer_size )
+        [fz] | --UI-fresh | --buffer_size )
             [ -z "$2" ] && return 4
 
             opt_partcloneOpt+=" $1 $2"
