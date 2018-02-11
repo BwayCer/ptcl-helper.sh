@@ -328,16 +328,16 @@ fnMain_md5() {
 
     if [ "$opt_write" -eq 1 ]; then
         fnMd5sum_deviceFile
-        fnMd5sum_splitDeviceFile
+        fnMd5sum_wrapDeviceFile
     elif [ "$opt_show" -eq 1 ]; then
         fnMd5sum_deviceFile 0
         echo
-        fnMd5sum_splitDeviceFile 0
+        fnMd5sum_wrapDeviceFile 0
     else
         tmp=1
         fnMd5sum_checkDeviceFile
         [ $? -eq 0 ] && tmp=0
-        fnMd5sum_checkSplitDeviceFile
+        fnMd5sum_checkWrapDeviceFile
         [ $? -eq 0 ] && tmp=0
         [ $tmp -eq 1 ] && fnShowHelp
     fi
@@ -841,7 +841,7 @@ fnSplitFile() {
 
     local backupList
     local tarName="deviceFile.tar.gz"
-    local storeDirName="splitDeviceFile"
+    local storeDirName="wrapDeviceFile"
 
     local tmpMsg=""
     fnLogProcess() {
@@ -862,8 +862,8 @@ fnSplitFile() {
         && Loxog err '找不到需要分段的文件。' \
         && exit 1
 
-    _onCtrlC " [ -f 'splitDeviceFile.md5' ] || rm -rf '$storeDirName'"
-    fnSplitFile_mkdirSplitDevice "$storeDirName"
+    _onCtrlC " [ -f 'wrapDeviceFile.md5' ] || rm -rf '$storeDirName'"
+    fnSplitFile_mkdirStoreDir "$storeDirName"
 
     fnLogProcess "打包並壓縮備份文件" "( ... )"
     # 使用 split -n 選項時需知道文件大小 故無法同過管道一段段地建立。
@@ -885,10 +885,10 @@ fnSplitFile() {
     fnLogProcess "clear" "( 成功 )"
 
     fnLogProcess "建立校驗碼" "( ... )"
-    fnMd5sum_splitDeviceFile > /dev/null
+    fnMd5sum_wrapDeviceFile > /dev/null
     fnLogProcess "clear" "( 成功 )"
 }
-fnSplitFile_mkdirSplitDevice() {
+fnSplitFile_mkdirStoreDir() {
     local dirName="$1"
 
     [ ! -e "$dirName" ] \
@@ -922,7 +922,7 @@ fnSplitFile_restore() {
     [ -z "$quiet" ] && quiet=0
 
     local tarName="deviceFile.tar.gz"
-    local storeDirName="splitDeviceFile"
+    local storeDirName="wrapDeviceFile"
 
     local tmpMsg=""
     fnLogProcess() {
@@ -936,7 +936,7 @@ fnSplitFile_restore() {
         tmpMsg="$1"
     }
 
-    fnMd5sum_checkSplitDeviceFile
+    fnMd5sum_checkWrapDeviceFile
 
     [ -z "`ls $storeDirName/$tarName.* 2> /dev/null`" ] \
         && Loxog err '找不到需要分段的文件。' \
@@ -960,22 +960,22 @@ fnSplitFile_restore() {
 fnMd5sum_deviceFile() {
     local bisWrite=$1
 
-    fnLsList hostInfo.txt cloneGpt.sh clone.sh restoreGpt.sh restore.sh \
+    fnLsList hostInfo.txt clone.sh restore.sh \
         "partitionData_*.gpt" "device_*.ptcl.img"
     [ ${#rtnLsList[@]} -eq 0 ] && return 2
     [ "$bisWrite" == 0 ] \
         && md5sum "${rtnLsList[@]}" \
         || md5sum "${rtnLsList[@]}" | tee "deviceFile.md5"
 }
-fnMd5sum_splitDeviceFile() {
+fnMd5sum_wrapDeviceFile() {
     local bisWrite=$1
-    local splitDeviceFiles="splitDeviceFile/deviceFile.tar.gz.*"
+    local wrapDeviceFiles="wrapDeviceFile/deviceFile.tar.gz.*"
 
-    [ -z "`ls $splitDeviceFiles 2> /dev/null`" ] && return 2
+    [ -z "`ls $wrapDeviceFiles 2> /dev/null`" ] && return 2
 
     [ "$bisWrite" == 0 ] \
-        && md5sum $splitDeviceFiles \
-        || md5sum $splitDeviceFiles | tee "splitDeviceFile.md5"
+        && md5sum $wrapDeviceFiles \
+        || md5sum $wrapDeviceFiles | tee "wrapDeviceFile.md5"
 }
 fnMd5sum_checkDeviceFile() {
     local md5File="deviceFile.md5"
@@ -987,8 +987,8 @@ fnMd5sum_checkDeviceFile() {
     [ $? -ne 0 ] && Loxog err "校驗碼錯誤。" && exit 1
     echo
 }
-fnMd5sum_checkSplitDeviceFile() {
-    local md5File="splitDeviceFile.md5"
+fnMd5sum_checkWrapDeviceFile() {
+    local md5File="wrapDeviceFile.md5"
 
     [ ! -f "$md5File" ] && return 2
 
