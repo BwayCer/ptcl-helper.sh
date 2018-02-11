@@ -243,9 +243,7 @@ fnOpt_wrap() {
         -a | --average )
             [ "$opt_average" -le 0 2> /dev/null ] && return 4
 
-            [ -n "$2" ] \
-                && opt_average=$2 \
-                || opt_average=256
+            opt_average=$2
             return 2
             ;;
         -b | --bytes | -n | --number )
@@ -265,6 +263,8 @@ fnMain_wrap() {
     opt_average=""
     opt_splitOpt=""
     fnParseOption
+
+    [ -z "$opt_average" ] && opt_average=256
 
     local dirPath="${_args[0]}"
 
@@ -840,7 +840,8 @@ fnSplitFile() {
     fnLogProcess "clear" "( 成功 )"
 
     if [ -z "$splitOpt" ]; then
-        splitOpt=" -n `fnSplitFile_getOptAverage $optAverage "$tarName.tmp"`"
+        splitOpt=" -n `fnSplitFile_getOptAverage "$optAverage" "$tarName.tmp"`"
+        [ $? -ne 0 ]; exit 1
     fi
 
     fnLogProcess "分段文件" "( ... )"
@@ -860,10 +861,7 @@ fnSplitFile_mkdirSplitDevice() {
     [ ! -e "$dirName" ] \
         && mkdir "$dirName" && return
 
-    if [ ! -d "$dirName" ] || [ -z "`ls -A "$dirName"`" ]; then
-        mkdir "$dirName"
-        return
-    fi
+    [ -d "$dirName" ] && [ -z "`ls -A "$dirName"`" ] && return
 
     Loxog err "請空出 \"$PWD/$dirName\" 位置供分段文件儲放。"
     exit 1
@@ -878,6 +876,7 @@ fnSplitFile_getOptAverage() {
     [ -z "$average" ] && average=256
 
     tmp=`du --apparent-size "$sourceFilePath" | cut -f 1`
+    [ $? -ne 0 ] && exit 1
     totalSize=$[ $tmp >> 10 ]
 
     (( tmp= $totalSize / $average ))
