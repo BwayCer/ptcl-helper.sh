@@ -113,7 +113,7 @@ fnMain() {
                 pathTxt+="├── deviceFile_*.img   裝置文件（備份裝置資料）"
                 ;;
             wrapDeviceFile )
-                pathTxt+="├─┬ wrapDeviceFile/   打包裝置文件"$_br"  "
+                pathTxt+="├─┬ wrapDeviceFile/   打包裝置目錄"$_br"  "
                 pathTxt+="│ └── deviceFile.tar.gz.*   壓縮分段的裝置文件"
                 ;;
             md5 )
@@ -558,7 +558,7 @@ fnCheckMountState() {
     [ $bisHasUmount -eq 1 ] && exit 1
 
     if [ $bisHasNotCheck -eq 1 ]; then
-        printf "$_fYelB%s\n%s$_fN %s" \
+        printf "$_fYelB%s\n%s$_fN %s ： " \
             "！！！ 未卸載的裝置可能會有誤刪資料的風險 ！！！" \
             "請手動檢查無法確認之裝置。" \
             "（<Ctrl+c> 退出； <Enter> 繼續；）"
@@ -579,8 +579,9 @@ fnParseDeviceList() {
         exit 1
     fi
 
-    local val ptType
+    local tmp val ptType
     local hasNoAllowDevice=0
+    local hasConfirmNoGpt=0
     local devicePtList=()
     local deviceList=()
 
@@ -592,12 +593,21 @@ fnParseDeviceList() {
             Loxog err "找不到 \"$val\" 裝置。"
             continue
         elif [ -n "$ptType" ] && [ "$ptType" != "gpt" ]; then
-            hasNoAllowDevice=1
-            Loxog err '尚未對非 "GPT" 分區表的裝置提供服務。'
-            continue
+            [ $hasConfirmNoGpt -eq 1 ] && continue
+
+            Loxog war '對非 "GPT" 分區表的裝置使用 \`sfdisk -d <device>\` 命令。'
+            printf "%s ： " "確定繼續嗎？ （ yes： 繼續；）"
+            read -t 6 tmp
+            echo
+            if [ "$tmp" == "yes" ]; then
+                hasConfirmNoGpt=1
+            else
+                hasNoAllowDevice=1
+                break
+            fi
         fi
 
-        [ "$ptType" == "gpt" ] \
+        [ -n "$ptType" ] \
             && devicePtList[ ${#devicePtList[@]} ]=$val \
             || deviceList[ ${#deviceList[@]} ]=$val
     done
@@ -786,8 +796,8 @@ fnGetInfo_MdForm() {
     # txtForm+=$_br`echo "$devId" | sed "s/\(.*\)/> \1/"`
     txtForm+=$_br"> $helPre"
     txtForm+=$_br$_br$_br
-    tmp=`uname -a`
-    txtForm+=`fnOneMsg "uname -a" "$tmp"`
+    tmp=`uname -a`$_br`partclone.info -v`$_br`sgdisk -V`$_br`sfdisk -v`
+    txtForm+=`fnOneMsg "處理環境及使用工具的版本" "$tmp"`
     txtForm+=$_br$_br
     txtForm+=`fnOneMsg "sgdisk -p" "$gdiskInfo"`
     txtForm+=$_br$_br
@@ -838,22 +848,29 @@ fnBackupCode_single() {
     tmpClone='[ -n "$1" ] && device="$1" || device="'`realpath "$device"`'"; shift;'
     case "$deviceType" in
         GPT )
-            name="./deviceFile_`basename "$device"`.`fnRandomStr`.gpt.partitionData"
-            tmp=$_br'sgdisk '$customOpt
-            tmpRestore+=$tmp
-            tmpClone+=$tmp
-            restoreCode=$tmpRestore' --load-backup "'$name'" "$device"'
-            cloneCode=$tmpClone' --backup "'$name'" "$device"'
+            fsType=`blkid -o value -s PTTYPE "$device"`
+            name=`basename "$device"`
+            name="./deviceFile_${name}.`fnRandomStr`.${fsType}.partitionData"
+            if [ "$fsType" == "gpt" ]; then
+                tmp=$_br'sgdisk '$customOpt
+                tmpRestore+=$tmp
+                tmpClone+=$tmp
+                restoreCode=$tmpRestore' --load-backup "'$name'" "$device"'
+                cloneCode=$tmpClone' --backup "'$name'" "$device"'
+            else
+                restoreCode=$tmpRestore$_br'cat "'$name'" | sfdisk "$device"'
+                cloneCode=$tmpClone$_br'sfdisk -d "$device" > "'$name'"'
+            fi
             ;;
         store )
             fsType=`blkid -o value -s TYPE "$device"`
             name=`basename "$device" | sed "s/\([^.]*\)\..*/\1/g"`
-            name="deviceFile_${name}_${fsType}.`fnRandomStr`.ptcl.img"
+            name="./deviceFile_${name}_${fsType}.`fnRandomStr`.ptcl.img"
             tmp=$_br"partclone.$fsType"
             tmpRestore+=$tmp
             tmpClone+=$tmp
-            restoreCode=$tmpRestore' --restore '$customOpt' -s "'$name'" -o "$device"'
-            cloneCode=$tmpClone' --clone '$customOpt' -s "$device" -o "'$name'"'
+            restoreCode=$tmpRestore' --restore '$customOpt' -s "'$name'" -O "$device"'
+            cloneCode=$tmpClone' --clone '$customOpt' -s "$device" -O "'$name'"'
             ;;
     esac
 
@@ -870,7 +887,7 @@ fnExecClone() {
     for (( idx=3 ; $idx < $len ; idx= $idx + 2 ))
     do
         echo
-        Loxog war "備份 $1 裝置 （ 3 秒後繼續 或 按 <確認鍵> 繼續 ）"
+        Loxog war "備份 $1 裝置 （ 3 秒後繼續 或 按 <確認鍵> 繼續 ） ： "
         shift
         read -t 3
         val=`echo "$cloneSh" | sed -n "$idx,$(( $idx + 1 ))p"`
@@ -917,6 +934,7 @@ fnSplitFile() {
     # tar -czf - <file ...> | split -b <size> - <prefixName>
     _onCtrlC " [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
     tar -czf "$tarName.tmp" "${backupList[@]}"
+    [ $? -ne 0 ] && exit 1
     fnLogProcess "clear" "( 成功 )"
 
     if [ -z "$splitOpt" ]; then
