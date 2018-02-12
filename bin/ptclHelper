@@ -113,7 +113,7 @@ fnMain() {
                 pathTxt+="├── deviceFile_*.img   裝置文件（備份裝置資料）"
                 ;;
             wrapDeviceFile )
-                pathTxt+="├─┬ wrapDeviceFile/   打包裝置文件"$_br"  "
+                pathTxt+="├─┬ wrapDeviceFile/   打包裝置目錄"$_br"  "
                 pathTxt+="│ └── deviceFile.tar.gz.*   壓縮分段的裝置文件"
                 ;;
             md5 )
@@ -558,7 +558,7 @@ fnCheckMountState() {
     [ $bisHasUmount -eq 1 ] && exit 1
 
     if [ $bisHasNotCheck -eq 1 ]; then
-        printf "$_fYelB%s\n%s$_fN %s" \
+        printf "$_fYelB%s\n%s$_fN %s ： " \
             "！！！ 未卸載的裝置可能會有誤刪資料的風險 ！！！" \
             "請手動檢查無法確認之裝置。" \
             "（<Ctrl+c> 退出； <Enter> 繼續；）"
@@ -865,7 +865,7 @@ fnBackupCode_single() {
         store )
             fsType=`blkid -o value -s TYPE "$device"`
             name=`basename "$device" | sed "s/\([^.]*\)\..*/\1/g"`
-            name="deviceFile_${name}_${fsType}.`fnRandomStr`.ptcl.img"
+            name="./deviceFile_${name}_${fsType}.`fnRandomStr`.ptcl.img"
             tmp=$_br"partclone.$fsType"
             tmpRestore+=$tmp
             tmpClone+=$tmp
@@ -887,7 +887,7 @@ fnExecClone() {
     for (( idx=3 ; $idx < $len ; idx= $idx + 2 ))
     do
         echo
-        Loxog war "備份 $1 裝置 （ 3 秒後繼續 或 按 <確認鍵> 繼續 ）"
+        Loxog war "備份 $1 裝置 （ 3 秒後繼續 或 按 <確認鍵> 繼續 ） ： "
         shift
         read -t 3
         val=`echo "$cloneSh" | sed -n "$idx,$(( $idx + 1 ))p"`
