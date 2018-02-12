@@ -796,8 +796,8 @@ fnGetInfo_MdForm() {
     # txtForm+=$_br`echo "$devId" | sed "s/\(.*\)/> \1/"`
     txtForm+=$_br"> $helPre"
     txtForm+=$_br$_br$_br
-    tmp=`uname -a`
-    txtForm+=`fnOneMsg "uname -a" "$tmp"`
+    tmp=`uname -a`$_br`partclone.info -v`$_br`sgdisk -V`$_br`sfdisk -v`
+    txtForm+=`fnOneMsg "處理環境及使用工具的版本" "$tmp"`
     txtForm+=$_br$_br
     txtForm+=`fnOneMsg "sgdisk -p" "$gdiskInfo"`
     txtForm+=$_br$_br
@@ -869,8 +869,8 @@ fnBackupCode_single() {
             tmp=$_br"partclone.$fsType"
             tmpRestore+=$tmp
             tmpClone+=$tmp
-            restoreCode=$tmpRestore' --restore '$customOpt' -s "'$name'" -o "$device"'
-            cloneCode=$tmpClone' --clone '$customOpt' -s "$device" -o "'$name'"'
+            restoreCode=$tmpRestore' --restore '$customOpt' -s "'$name'" -O "$device"'
+            cloneCode=$tmpClone' --clone '$customOpt' -s "$device" -O "'$name'"'
             ;;
     esac
 
@@ -934,6 +934,7 @@ fnSplitFile() {
     # tar -czf - <file ...> | split -b <size> - <prefixName>
     _onCtrlC " [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
     tar -czf "$tarName.tmp" "${backupList[@]}"
+    [ $? -ne 0 ] && exit 1
     fnLogProcess "clear" "( 成功 )"
 
     if [ -z "$splitOpt" ]; then
