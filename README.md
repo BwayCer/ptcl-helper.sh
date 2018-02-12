@@ -22,6 +22,12 @@
 
 
 
+## 要求
+
+
+* `sgdisk` 、 `partclone` 工具。
+
+
 
 ## 備份須知
 
@@ -58,13 +64,6 @@ hostInfo.txt、restore.sh、clone.sh
    裝置文件、壓縮文件、打包裝置目錄 各佔據一份空間。
 1. 對非 `GPT` 分區表的裝置使用 `sfdisk -d <device>` 命令備份。
 1. **在對 `Dos` 分區表的 Window 10 上裝置備份分區數據測試失敗。**
-
-
-
-## 要求
-
-
-* `sgdisk` 、 `partclone` 工具。
 
 
 
