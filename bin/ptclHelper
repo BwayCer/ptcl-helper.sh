@@ -579,8 +579,9 @@ fnParseDeviceList() {
         exit 1
     fi
 
-    local val ptType
+    local tmp val ptType
     local hasNoAllowDevice=0
+    local hasConfirmNoGpt=0
     local devicePtList=()
     local deviceList=()
 
@@ -592,12 +593,21 @@ fnParseDeviceList() {
             Loxog err "找不到 \"$val\" 裝置。"
             continue
         elif [ -n "$ptType" ] && [ "$ptType" != "gpt" ]; then
-            hasNoAllowDevice=1
-            Loxog err '尚未對非 "GPT" 分區表的裝置提供服務。'
-            continue
+            [ $hasConfirmNoGpt -eq 1 ] && continue
+
+            Loxog war '對非 "GPT" 分區表的裝置使用 \`sfdisk -d <device>\` 命令。'
+            printf "%s ： " "確定繼續嗎？ （ yes： 繼續；）"
+            read -t 6 tmp
+            echo
+            if [ "$tmp" == "yes" ]; then
+                hasConfirmNoGpt=1
+            else
+                hasNoAllowDevice=1
+                break
+            fi
         fi
 
-        [ "$ptType" == "gpt" ] \
+        [ -n "$ptType" ] \
             && devicePtList[ ${#devicePtList[@]} ]=$val \
             || deviceList[ ${#deviceList[@]} ]=$val
     done
@@ -838,12 +848,19 @@ fnBackupCode_single() {
     tmpClone='[ -n "$1" ] && device="$1" || device="'`realpath "$device"`'"; shift;'
     case "$deviceType" in
         GPT )
-            name="./deviceFile_`basename "$device"`.`fnRandomStr`.gpt.partitionData"
-            tmp=$_br'sgdisk '$customOpt
-            tmpRestore+=$tmp
-            tmpClone+=$tmp
-            restoreCode=$tmpRestore' --load-backup "'$name'" "$device"'
-            cloneCode=$tmpClone' --backup "'$name'" "$device"'
+            fsType=`blkid -o value -s PTTYPE "$device"`
+            name=`basename "$device"`
+            name="./deviceFile_${name}.`fnRandomStr`.${fsType}.partitionData"
+            if [ "$fsType" == "gpt" ]; then
+                tmp=$_br'sgdisk '$customOpt
+                tmpRestore+=$tmp
+                tmpClone+=$tmp
+                restoreCode=$tmpRestore' --load-backup "'$name'" "$device"'
+                cloneCode=$tmpClone' --backup "'$name'" "$device"'
+            else
+                restoreCode=$tmpRestore$_br'cat "'$name'" | sfdisk "$device"'
+                cloneCode=$tmpClone$_br'sfdisk -d "$device" > "'$name'"'
+            fi
             ;;
         store )
             fsType=`blkid -o value -s TYPE "$device"`
