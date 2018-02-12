@@ -1,0 +1,32 @@
+
+約定
+=========================================================================
+
+1. 將本知識庫用作參考者，請給予「來源鏈結」：
+     [GitHub BwayCer/ptcl-helper.sh](https://github.com/BwayCer/ptcl-helper.sh)
+
+2. 其餘方式運用本知識庫者，請給予「來源鏈結、授權鏈結、名稱、版本、簡述」：
+     [GitHub BwayCer/ptcl-helper.sh](https://github.com/BwayCer/ptcl-helper.sh)
+     [CC-BY-4.0](https://github.com/BwayCer/ptcl-helper.sh/blob/master/LicenseAbout.txt)
+     帕蒂瑪其小幫手 v1.0.0 - 通過 `sgdisk` 及 `partclone` 備份工具協助處理的備份小幫手。
+
+__其餘事項依授權規範__
+
+
+關於
+=========================================================================
+
+* 名　稱： 帕蒂瑪其小幫手
+* 授　權： CC-BY-4.0
+* 版　本： v1.0.0
+* 簡　述： 通過 `sgdisk` 及 `partclone` 備份工具協助處理的備份小幫手。
+* 擁有者： 張本微 (https://bwaycer.github.io/)
+* 貢獻者： 無
+* 備　註： 無
+
+
+依賴
+=========================================================================
+
+無
+
