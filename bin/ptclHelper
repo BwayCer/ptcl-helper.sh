@@ -1,0 +1,1276 @@
+#!/bin/bash
+# 帕蒂瑪其小幫手腳本
+
+
+##shStyle ###
+
+
+_originPlace="lib"
+
+# 避免語言支持不完全，如： df。
+export LC_ALL=C
+
+_shScript() {
+    if [ "`id -u`" != "0" ]; then
+        Loxog err "請使用 root 身分執行。"
+        exit 1
+    fi
+
+
+    case "$1" in
+    blkid  ) _shCmdLevel=1 ;;
+    info   ) _shCmdLevel=1 ;;
+    wrap   ) _shCmdLevel=1 ;;
+    md5    ) _shCmdLevel=1 ;;
+    esac
+}
+
+
+##shStyle 介面函式
+
+
+fnHelp_main() { echo "# 備份小幫手，通過 sgdisk 及 partclone 備份裝置。
+$help_partcloneOptExplain
+$help_splitOptExplain
+[[USAGE]] <備份儲存位置> $help_allowDevice
+[[SUBCMD]]
+  blkid     $fnHelp_blkid_briefly
+  info      $fnHelp_info_briefly
+  wrap      $fnHelp_wrap_briefly
+  md5       $fnHelp_md5_briefly
+[[OPT]]
+      --preview              預覽將被執行的命令。
+$help_partcloneOpt
+$help_splitOpt
+  -h, --help                 幫助。
+"; }
+fnOpt_main() {
+    local tmp
+
+    fnOpt_partcloneOpt "$@"
+    tmp=$?; [ $tmp -ne 0 ] && return $tmp
+
+    fnOpt_splitOpt "$@"
+    tmp=$?; [ $tmp -ne 0 ] && return $tmp
+
+    case "$1" in
+        --preview )
+            opt_preview=1
+            return 1
+            ;;
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_preview=0
+    opt_partcloneOpt=""
+    opt_average=""
+    opt_splitOpt=""
+    fnParseOption
+
+    local tmp
+    local dirPath="${_args[0]}"
+
+    fnCheckDirPath() {
+        [ -z "$dirPath" ] && Loxog err "未指定備份儲存位置。" && exit 1
+
+        [ ! -e "$dirPath" ] && return
+        [ -d "$dirPath" ] && [ -z "`ls -A "$dirPath"`" ] && return
+
+        Loxog err "指定的備份位置存在文件或不為空目錄。"
+        exit 1
+    }
+    fnCheckDirPath
+
+    opt_partcloneOpt="--logfile ./partclone.log"$opt_partcloneOpt
+
+    fnParseDeviceList "${_args[@]:1}"
+    local devicePtList=("${rtnParseDeviceList_pt[@]}")
+    local deviceList=("${rtnParseDeviceList_store[@]}")
+
+    local mdInfo pathTxt
+    tmp="#!/bin/bash$_br#$_br"
+    local restoreSh=$tmp
+    local cloneSh=$tmp
+
+    pathTxt="──┬ 備份儲存位置 -> $PWD/$dirPath"
+    # pathTxt+=$_br"  ├── .$_fileName.tmp   [可忽略] 暫存的未完成紀錄"
+    pathTxt+=$_br"  ├── partclone.log   [可忽略] 備份工具的日誌"
+    pathTxt+=$_br"  ├── deviceFile.tar.gz   [可忽略] 裝置文件的壓縮文件"
+    fnPathForm() {
+        pathTxt+=$_br"  "
+        case "$1" in
+            hostInfo ) pathTxt+="├── hostInfo.txt   裝置資訊" ;;
+            shCode )
+                pathTxt+="├── restore.sh   還原腳本"$_br"  "
+                pathTxt+="├── clone.sh   備份腳本"
+                ;;
+            deviceFile )
+                pathTxt+="├── deviceFile_*.partitionData   裝置文件（備份分區數據）"$_br"  "
+                pathTxt+="├── deviceFile_*.img   裝置文件（備份裝置資料）"
+                ;;
+            wrapDeviceFile )
+                pathTxt+="├─┬ wrapDeviceFile/   打包裝置目錄"$_br"  "
+                pathTxt+="│ └── deviceFile.tar.gz.*   壓縮分段的裝置文件"
+                ;;
+            md5 )
+                pathTxt+="├── deviceFile.md5   裝置文件校驗碼"$_br"  "
+                pathTxt+="└── wrapDeviceFile.md5   打包裝置文件校驗碼"
+                ;;
+        esac
+    }
+
+    Loxog com "讀取 備份、還原腳本資訊"
+    if [ ${#devicePtList[@]} -ne 0 ]; then
+        fnBackupCode GPT "" "${devicePtList[@]}"
+        restoreSh+="$rtnBackupCode_restore"
+        cloneSh+="$rtnBackupCode_clone"
+    fi
+    if [ ${#deviceList[@]} -ne 0 ]; then
+        [ -n "$restoreSh" ] && restoreSh+=$_br && cloneSh+=$_br
+
+        fnBackupCode store "$opt_partcloneOpt" "${deviceList[@]}"
+        restoreSh+="$rtnBackupCode_restore"
+        cloneSh+="$rtnBackupCode_clone"
+    fi
+
+    Loxog com "讀取 裝置資訊"
+    if [ $opt_preview -eq 0 ]; then
+        fnGetInfo_devicePtList=("${devicePtList[@]}")
+        fnGetInfo_deviceList=("${deviceList[@]}")
+        fnGetInfo
+        mdInfo=$rtnGetInfo
+    fi
+
+    echo
+
+    Loxog com "建立備份目錄"
+    if [ $opt_preview -eq 0 ]; then
+        if [ ! -d "$dirPath" ]; then
+            mkdir -p "$dirPath"
+            tmp=$?; [ $tmp -ne 0 ] && exit $tmp
+        fi
+    else
+        Loxog war '```' "-> $dirPath" '```'"$_br"
+    fi
+
+    Loxog com "寫入裝置資訊"
+    [ $opt_preview -eq 0 ] \
+        && echo "$mdInfo" > "$dirPath/hostInfo.txt" \
+        || Loxog war '```' \
+            "`echo "裝置資訊請查看$_br./$_fileName info "${_args[*]:1}`" \
+            '```'"$_br"
+    fnPathForm "hostInfo"
+
+    Loxog com "寫入備份、還原腳本"
+    if [ $opt_preview -eq 0 ]; then
+        echo "$restoreSh" > "$dirPath/restore.sh"
+        echo "$cloneSh" > "$dirPath/clone.sh"
+        chmod 755 "$dirPath/restore.sh" "$dirPath/clone.sh"
+    else
+        Loxog war '```' "## 還原腳本 $dirPath/restore.sh"
+        echo "$restoreSh" | Loxog com
+        Loxog war "$_br## 備份腳本 $dirPath/restore.sh"
+        echo "$cloneSh" | Loxog com
+        Loxog war '```'"$_br"
+    fi
+    fnPathForm "shCode"
+
+    echo
+
+    Loxog com "備份裝置資料"
+    if [ $opt_preview -eq 0 ]; then
+        cd "$dirPath"
+        fnExecClone "$cloneSh" "${devicePtList[@]}" "${deviceList[@]}"
+        fnMd5sum_deviceFile > /dev/null
+        rm "./partclone.log"
+        cd "$_PWD"
+    else
+        Loxog war '```' "# PWD -> `realpath "$dirPath"`" "sh clone.sh" '```'"$_br"
+    fi
+    fnPathForm "deviceFile"
+
+    echo
+
+    Loxog com "打包裝置資料"
+    if [ $opt_preview -eq 0 ]; then
+        cd "$dirPath"
+        fnSplitFile 0 "$opt_splitOpt" "$opt_average"
+        cd "$_PWD"
+    else
+        Loxog war '```' "./$_fileName wrap $dirPath" '```'"$_br"
+    fi
+    fnPathForm "wrapDeviceFile"
+    fnPathForm "md5"
+
+    echo
+    echo "$pathTxt" | Loxog com
+}
+
+fnHelp_blkid_briefly="顯示 \`blkid\` 資訊。"
+fnHelp_blkid() { echo "# $fnHelp_blkid_briefly
+[[USAGE]] $help_allowDevice
+[[OPT]]
+  -s, --show <tag>[,...]   顯示指定標籤。 預設為 \"PTTYPE,UUID,PARTUUID\"。
+  -h, --help               幫助。
+"; }
+fnOpt_blkid() {
+    case "$1" in
+        -s | --show )
+            [ -z "$2" ] && return 4
+
+            opt_show="$2"
+            return 2
+            ;;
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_blkid() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_show="PTTYPE,UUID,PARTUUID"
+    fnParseOption
+
+    fnParseDeviceList "${_args[@]}"
+    fnBlkidTable "$opt_show" \
+        "${rtnParseDeviceList_pt[@]}" \
+        "${rtnParseDeviceList_store[@]}"
+}
+
+fnHelp_info_briefly="留存當前裝置資訊供還原後對照。"
+fnHelp_info() { echo "# $fnHelp_info_briefly
+[[USAGE]] $help_allowDevice
+[[OPT]]
+  -h, --help   幫助。
+"; }
+fnOpt_info() {
+    case "$1" in
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_info() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    fnParseOption
+
+    fnParseDeviceList "${_args[@]}"
+    fnGetInfo_devicePtList=("${rtnParseDeviceList_pt[@]}")
+    fnGetInfo_deviceList=("${rtnParseDeviceList_store[@]}")
+    fnGetInfo
+    echo "$rtnGetInfo"
+}
+
+fnHelp_wrap_briefly="壓縮、分段及還原。"
+fnHelp_wrap() { echo "# $fnHelp_wrap_briefly
+$help_splitOptExplain
+[[USAGE]] <備份目錄位置>
+[[OPT]]
+  -r, --restore-wrqp         將分段的裝置文件還原。
+$help_splitOpt
+  -h, --help                 幫助。
+"; }
+fnOpt_wrap() {
+    case "$1" in
+        -r | --restore-wrap )
+            opt_restoreWrap=1
+            return 1
+            ;;
+        -a | --average )
+            [ "$opt_average" -le 0 2> /dev/null ] && return 4
+
+            opt_average=$2
+            return 2
+            ;;
+        -b | --bytes | -n | --number )
+            [ -z "$2" ] && return 4
+
+            opt_splitOpt+=" $1 $2"
+            return 2
+            ;;
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_wrap() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_restoreWrap=0
+    opt_average=""
+    opt_splitOpt=""
+    fnParseOption
+
+    [ -z "$opt_average" ] && opt_average=256
+
+    local dirPath="${_args[0]}"
+
+    fnCheckIsBackupDir "$dirPath"
+
+    cd "$dirPath"
+
+    [ $opt_restoreWrap -eq 1 ] \
+        && fnSplitFile_restore \
+        || fnSplitFile 0 "$opt_splitOpt" "$opt_average"
+
+    cd "$_PWD"
+}
+
+fnHelp_md5_briefly="建立校驗碼。"
+fnHelp_md5() { echo "# $fnHelp_md5_briefly
+[[USAGE]] <備份目錄位置>
+[[OPT]]
+  -s, --show    顯示更新的校驗碼。
+  -w, --write   將校驗碼寫入文件。
+  -h, --help    幫助。
+"; }
+fnOpt_md5() {
+    case "$1" in
+        -s | --show )
+            opt_show=1
+            return 1
+            ;;
+        -w | --write )
+            opt_write=1
+            return 1
+            ;;
+        -h | --help ) fnShowHelp ;;
+        * ) return 3 ;;
+    esac
+}
+fnMain_md5() {
+    [ $# -eq 0 ] && fnShowHelp
+
+    opt_show=0
+    opt_write=0
+    fnParseOption
+
+    local tmp
+    local backupList
+    local dirPath="${_args[0]}"
+
+    fnCheckIsBackupDir "$dirPath"
+
+    cd "$dirPath"
+
+    if [ "$opt_write" -eq 1 ]; then
+        fnMd5sum_deviceFile
+        fnMd5sum_wrapDeviceFile
+    elif [ "$opt_show" -eq 1 ]; then
+        fnMd5sum_deviceFile 0
+        echo
+        fnMd5sum_wrapDeviceFile 0
+    else
+        tmp=1
+        fnMd5sum_checkDeviceFile
+        [ $? -eq 0 ] && tmp=0
+        fnMd5sum_checkWrapDeviceFile
+        [ $? -eq 0 ] && tmp=0
+        [ $tmp -eq 1 ] && fnShowHelp
+    fi
+
+    cd "$_PWD"
+}
+
+
+##shStyle 共享變數
+
+
+help_allowDevice='<裝置 ex: "/dev/sdx","/dev/sdxN">[...]'
+
+help_partcloneOptExplain="# \`partclone\` 相關選項可以查看 \`man partclone\` 說明。"
+help_partcloneOpt="
+  -D, --domain               Create ddrescue domain log from source device.
+                             \`partclone\` 相關選項。
+      --offset_domain <X>    Add offset X (bytes) to domain log values.
+                             \`partclone\` 相關選項。
+      --restore_raw_file     create special raw file for loop device.
+                             \`partclone\` 相關選項。
+  -R, --rescue               即使有錯誤仍繼續執行。 \`partclone\` 相關選項。
+  -C, --no_check             不要檢查設備的大小和可用空間。
+                             \`partclone\` 相關選項。
+  -N, --ncurse               Using Ncurses User Interface.
+                             \`partclone\` 相關選項。
+  -X, --dialog               Output message as Dialog Format.
+                             \`partclone\` 相關選項。
+  -I, --ignore_fschk         忽略檔案系統檢查。 \`partclone\` 相關選項。
+      --ignore_crc           忽略 crc 檢查。 \`partclone\` 相關選項。
+  -F, --force                強制執行。 \`partclone\` 相關選項。
+  -f, --UI-fresh <sec>       Fresh times of progress.  \`partclone\` 相關選項。
+  -z, --buffer_size <size>   讀取或寫入的緩衝區大小。 預設為 1048576。
+                             \`partclone\` 相關選項。
+  -d, --debug <level>        設定除錯層級 [1|2|3]。 \`partclone\` 相關選項。
+"
+help_partcloneOpt=`echo "$help_partcloneOpt" | sed '1d' | sed '$d'`
+fnOpt_partcloneOpt() {
+    local tmp="$1"
+    [ ${#tmp} -eq 2 ] && tmp=${tmp:1:1}
+    case "$tmp" in
+        [DRCNXIF] | --domain | --restore_raw_file | --rescue \
+            | --no_check | --ncurse | --dialog | --ignore_fschk \
+            | --ignore_crc | --force )
+            opt_partcloneOpt+=" $1"
+            return 1
+            ;;
+        [fz] | --UI-fresh | --buffer_size )
+            [ -z "$2" ] && return 4
+
+            opt_partcloneOpt+=" $1 $2"
+            return 2
+            ;;
+        d | --debug | --offset_domain )
+            [ -z "$2" ] && return 4
+
+            [ ${#opt} -eq 1 ] \
+                && opt_partcloneOpt+=" $1$2" \
+                || opt_partcloneOpt+=" $1=$2"
+            return 2
+            ;;
+    esac
+}
+
+help_splitOptExplain="# \`split\` 相關選項可以查看 \`man split\` 說明。"
+help_splitOpt="
+  -a, --average <sizeMB>     均分分段文件，以 MB 為單位。 預設選項，值為 256MB。
+  -b, --bytes <size>         以大小分段文件。 \`split\` 相關選項。
+  -n, --number <chunks>      以數量分段文件。 \`split\` 相關選項。
+"
+help_splitOpt=`echo "$help_splitOpt" | sed '1d' | sed '$d'`
+fnOpt_splitOpt() {
+    case "$1" in
+        -a | --average )
+            [ "$opt_average" -le 0 2> /dev/null ] && return 4
+
+            [ -n "$2" ] \
+                && opt_average=$2 \
+                || opt_average=256
+            return 2
+            ;;
+        -b | --bytes | -n | --number )
+            [ -z "$2" ] && return 4
+
+            opt_splitOpt+=" $1 $2"
+            return 2
+            ;;
+    esac
+}
+
+
+##shStyle 函式庫
+
+
+rtnCutArray=()
+fnCutArray() {
+    local separator strTxt
+    separator="$1"
+    strTxt="$2"
+
+    local idx val
+    local arrAns=()
+
+    idx=2
+    while [ 1 ]
+    do
+        val=`echo "$separator$strTxt" | cut -d "$separator" -f $idx`
+        [ "$val" == "" ] && break
+        arrAns[ ${#arrAns[@]} ]=$val
+        (( idx++ ))
+    done
+
+    rtnCutArray=("${arrAns[@]}")
+}
+
+fnRandomStr() {
+    local loop rem
+    local random=$RANDOM
+    local strAns=""
+    for loop in {1..2}
+    do
+        rem=$[ $random & 15 ]
+        random=$[ $random >> 4 ]
+        strAns+=${fnRandomStr_count16:$rem:1}
+    done
+    echo $strAns
+}
+fnRandomStr_count16="0123456789ABCDEF"
+
+rtnLsList=()
+fnLsList() {
+    local txt len idx val valA
+    local list
+    list=()
+
+    len=`ls -1 $val 2> /dev/null | cat`
+    for valA in "$@"
+    do
+        txt=`ls -1 $valA 2> /dev/null`
+        [ $? -ne 0 ] && continue
+
+        len=`ls -1 $valA | wc -l`
+        [ $len -eq 0 ] && continue
+
+        for idx in `seq 1 $len`
+        do
+            val=`echo "$txt" | sed -n "${idx}p"`
+            list[ ${#list[@]} ]=$val
+        done
+    done
+
+    rtnLsList=("${list[@]}")
+}
+
+fnCheckIsBackupDir() {
+    local dirPath="$1"
+
+    local tmp='找不到 "hostInfo.txt" 文件，判斷不為備份相關目錄。'
+    [ ! -f "$dirPath/hostInfo.txt" ] \
+        && Loxog err '"'$dirPath'" 位置'$tmp \
+        && exit 1
+}
+
+fnCheckMountState() {
+    [ -z "$*" ] && return
+    [ $fnCheckMountState_hasCheck -eq 1 ] && return
+
+    local tmp val
+    local bisHasNotCheck=0
+    local bisHasUmount=0
+
+    ## lsblk img
+    # 錯誤 lsblk 不能處理非裝置
+    # 但若執行 /dev/loop 又會因為未卸載而退出
+    for val in "$@"
+    do
+        tmp=`lsblk -o MOUNTPOINT "$val" 2> /dev/null`
+        if [ $? -ne 0 ]; then
+            bisHasNotCheck=1
+            printf "$_fYelB%s$_fN\n" \
+                "無法確認 \"$val\" 是否已卸載！"
+        elif [ -n "`echo "$tmp" | sed "1d" | grep .`" ]; then
+            bisHasUmount=1
+            Loxog err "請卸載 \"$val\" 裝置。"
+        fi
+    done
+
+    [ $bisHasUmount -eq 1 ] && exit 1
+
+    if [ $bisHasNotCheck -eq 1 ]; then
+        printf "$_fYelB%s\n%s$_fN %s ： " \
+            "！！！ 未卸載的裝置可能會有誤刪資料的風險 ！！！" \
+            "請手動檢查無法確認之裝置。" \
+            "（<Ctrl+c> 退出； <Enter> 繼續；）"
+        read
+        echo
+    fi
+
+    fnCheckMountState_hasCheck=1
+}
+fnCheckMountState_hasCheck=0
+fnCheckMountState_hasNotCheck=0
+
+rtnParseDeviceList_pt=()
+rtnParseDeviceList_store=()
+fnParseDeviceList() {
+    if [ -z "$*" ]; then
+        Loxog err "未指定裝置。"
+        exit 1
+    fi
+
+    local tmp val ptType
+    local hasNoAllowDevice=0
+    local hasConfirmNoGpt=0
+    local devicePtList=()
+    local deviceList=()
+
+    for val in "$@"
+    do
+        ptType=`blkid -o value -s PTTYPE "$val"`
+        if [ $? -ne 0 ]; then
+            hasNoAllowDevice=1
+            Loxog err "找不到 \"$val\" 裝置。"
+            continue
+        elif [ -n "$ptType" ] && [ "$ptType" != "gpt" ]; then
+            [ $hasConfirmNoGpt -eq 1 ] && continue
+
+            Loxog war '對非 "GPT" 分區表的裝置使用 \`sfdisk -d <device>\` 命令。'
+            printf "%s ： " "確定繼續嗎？ （ yes： 繼續；）"
+            read -t 6 tmp
+            echo
+            if [ "$tmp" == "yes" ]; then
+                hasConfirmNoGpt=1
+            else
+                hasNoAllowDevice=1
+                break
+            fi
+        fi
+
+        [ -n "$ptType" ] \
+            && devicePtList[ ${#devicePtList[@]} ]=$val \
+            || deviceList[ ${#deviceList[@]} ]=$val
+    done
+
+    [ $hasNoAllowDevice -ne 0 ] && exit 1
+    fnCheckMountState "${devicePtList[@]}" "${deviceList[@]}"
+
+    rtnParseDeviceList_pt=("${devicePtList[@]}")
+    rtnParseDeviceList_store=("${deviceList[@]}")
+}
+
+# lsblk 資訊時而空白
+fnBlkidTable() {
+    local showList="$1"; shift
+
+    fnCutArray "," "$showList"
+    showList=("${rtnCutArray[@]}")
+
+    local tmp idx val deviceName
+    local blkidInfo=""
+    local arrInfo=()
+    local txtInfo=""
+    local formatArgus=""
+    local strAns=""
+
+    for deviceName in "$@"
+    do
+        txtInfo+=$_br"0 $deviceName"
+        arrInfo[ ${#arrInfo[@]} ]=$deviceName
+
+        idx=1
+        for val in "${showList[@]}"
+        do
+            blkidInfo=`blkid -s "$val" -o value "$deviceName"`
+            arrInfo[ ${#arrInfo[@]} ]=$blkidInfo
+            txtInfo+=$_br"$idx $blkidInfo"
+            (( idx++ ))
+        done
+    done
+
+    idx=1
+    for idx in `seq 0 ${#showList[@]}`
+    do
+        tmp=${showList[ $(( $idx - 1 )) ]}$_br
+        tmp+=`echo "$txtInfo" | grep "^$idx " | cut -d " " -f 2-`
+        formatArgus+="   %-"`echo "$tmp" | wc -L`"s"
+    done
+    formatArgus=${formatArgus:3}$_br
+
+    printf "$formatArgus" "DEVNAME" "${showList[@]}"
+    printf "$formatArgus" "${arrInfo[@]}"
+}
+
+rtnGetInfo=""
+fnGetInfo() {
+    local val
+    local devId lsblkInfo
+    local gdiskInfo=""
+
+    devId=`fnBlkidTable "PTTYPE,UUID,PARTUUID" \
+        "${fnGetInfo_devicePtList[@]}" \
+        "${fnGetInfo_deviceList[@]}"`
+
+    if [ ${#fnGetInfo_devicePtList[@]} -ne 0 ]; then
+        for val in "${fnGetInfo_devicePtList[@]}"
+        do
+            [ -n "$gdiskInfo" ] && gdiskInfo+=$_br$_br
+            gdiskInfo+="# $val"
+            gdiskInfo+=$_br`sgdisk -p "$val"`
+        done
+    else
+        gdiskInfo="# 不包含分區表裝置"
+    fi
+
+    lsblkInfo=`fnBlkidTable \
+        "PTTYPE,TYPE,LABEL,UUID,PARTLABEL,PARTUUID" \
+        "${fnGetInfo_devicePtList[@]}" \
+        "${fnGetInfo_deviceList[@]}"`
+
+    fnGetInfo_mountDevice "${fnGetInfo_deviceList[@]}"
+    fnGetInfo_MdForm "$devId" "$gdiskInfo" "$lsblkInfo" \
+        "$fnGetInfo_du" "$fnGetInfo_fstab"
+}
+fnGetInfo_devicePtList=()
+fnGetInfo_deviceList=()
+fnGetInfo_du=""
+fnGetInfo_fstab=""
+fnGetInfo_mountDevice() {
+    if [ -z "$*" ]; then
+        fnGetInfo_du="# 不包含儲存裝置"
+        fnGetInfo_fstab="# 不包含根目錄裝置"
+        return
+    fi
+
+    fnCheckMountState "$@"
+
+    local tmp val fstabPath
+    local mountDevPath="/tmp/mountDev.tmp"
+    local canNotmount=0
+    local canNotumount=0
+    local mountList=()
+    local dfInfo=""
+    local fstabInfo=""
+
+    if [ -e "$mountDevPath" ]; then
+        Loxog err "請搬移 \"$mountDevPath\" 目錄或文件供暫時的掛載使用。"
+        exit 1
+    fi
+    mkdir "$mountDevPath"
+
+    for val in "$@"
+    do
+        tmp="$mountDevPath/$val"
+        mkdir -p "$tmp"
+        mount "$val" "$tmp"
+        [ $? -ne 0 ] && canNotmount=1 && Loxog err "無法掛載 \"$val\" 裝置。"
+        [ $canNotumount -ne 0 ] && continue
+        mountList[ ${#mountList[@]} ]=$tmp
+
+        fstabPath="$tmp/etc/fstab"
+        [ ! -f "$fstabPath" ] && continue
+        [ -n "$fstabInfo" ] && fstabInfo+=$_br$_br
+        fstabInfo+="## $val"
+        fstabInfo+=$_br`cat "$fstabPath"`
+    done
+    [ $canNotmount -ne 0 ] \
+        && Loxog err "請卸載 \"$mountDevPath\" 下的掛載裝置。" \
+        && exit 1
+
+    [ -z "$fstabInfo" ] && fstabInfo="# 不包含根目錄裝置"
+    dfInfo=`df -h \
+        --output=source,fstype,size,used,avail,pcent,target \
+        "${mountList[@]}"`
+    tmp=`echo "$PWD" | sed 's/\//\\\\\//g'`
+    dfInfo=`echo "$dfInfo" | sed "s/$tmp//"`
+
+
+    for val in "$@"
+    do
+        umount "$mountDevPath/$val"
+        [ $? -ne 0 ] && canNotumount=1
+    done
+
+    if [ $canNotumount -eq 0 ]; then
+        rm -rf "$mountDevPath"
+    else
+        Loxog err "無法卸載 \"$mountDevPath\" 下的掛載裝置。"
+        exit 1
+    fi
+
+    fnGetInfo_du="$dfInfo"
+    fnGetInfo_fstab="$fstabInfo"
+}
+fnGetInfo_MdForm() {
+    local devId="$1"
+    local gdiskInfo="$2"
+    local lsblkInfo="$3"
+    local dfInfo="$4"
+    local fstabInfo="$5"
+
+    local tmp
+    local helPre="\`\`\`"
+    local txtForm=""
+
+    fnOneMsg() {
+        local title="$1"
+        local msg="$2"
+
+        local txtAns=""
+        txtAns+="**$title**："
+        txtAns+=$_br
+        txtAns+=$_br$helPre
+        txtAns+=$_br$msg
+        txtAns+=$_br$helPre
+        txtAns+=$_br
+
+        echo "$txtAns"
+    }
+
+    txtForm+="裝置資訊"
+    txtForm+=$_br"======="
+    txtForm+=$_br$_br
+    txtForm+=$_br"> 主機識別碼："
+    txtForm+=$_br"> $helPre"
+    txtForm+=$_br"`echo "$devId" | sed "s/\(.*\)/> \1/"`"
+    # txtForm+=$_br`echo "$devId" | sed "s/\(.*\)/> \1/"`
+    txtForm+=$_br"> $helPre"
+    txtForm+=$_br$_br$_br
+    tmp=`uname -a`$_br`partclone.info -v`$_br`sgdisk -V`$_br`sfdisk -v`
+    txtForm+=`fnOneMsg "處理環境及使用工具的版本" "$tmp"`
+    txtForm+=$_br$_br
+    txtForm+=`fnOneMsg "sgdisk -p" "$gdiskInfo"`
+    txtForm+=$_br$_br
+    txtForm+=`fnOneMsg "lsbik" "$lsblkInfo"`
+    txtForm+=$_br$_br
+    txtForm+=`fnOneMsg "df" "$dfInfo"`
+    txtForm+=$_br$_br
+    txtForm+=`fnOneMsg "cat /etc/fstab" "$fstabInfo"`
+    txtForm+=$_br
+
+    rtnGetInfo=$txtForm
+}
+
+rtnBackupCode_restore=""
+rtnBackupCode_clone=""
+fnBackupCode() {
+    local val
+    local deviceType="$1"
+    local customOpt="$2"; shift 2
+
+    local restoreSh=""
+    local cloneSh=""
+
+    for val in "$@"
+    do
+        [ -n "$restoreSh" ] && restoreSh+=$_br && cloneSh+=$_br
+        fnBackupCode_single "$deviceType" "$customOpt" "$val"
+        restoreSh+="$fnBackupCode_singleRestore"
+        cloneSh+="$fnBackupCode_singleClone"
+    done
+
+    rtnBackupCode_restore="$restoreSh"
+    rtnBackupCode_clone="$cloneSh"
+}
+fnBackupCode_singleRestore=""
+fnBackupCode_singleClone=""
+fnBackupCode_single() {
+    local tmp tmpRestore tmpClone
+    local deviceType="$1"
+    local customOpt="$2"
+    local device="$3"
+
+    local name fsType
+    local restoreCode=""
+    local cloneCode=""
+
+    tmpRestore='device="$1"; shift;'
+    tmpClone='[ -n "$1" ] && device="$1" || device="'`realpath "$device"`'"; shift;'
+    case "$deviceType" in
+        GPT )
+            fsType=`blkid -o value -s PTTYPE "$device"`
+            name=`basename "$device"`
+            name="./deviceFile_${name}.`fnRandomStr`.${fsType}.partitionData"
+            if [ "$fsType" == "gpt" ]; then
+                tmp=$_br'sgdisk '$customOpt
+                tmpRestore+=$tmp
+                tmpClone+=$tmp
+                restoreCode=$tmpRestore' --load-backup "'$name'" "$device"'
+                cloneCode=$tmpClone' --backup "'$name'" "$device"'
+            else
+                restoreCode=$tmpRestore$_br'cat "'$name'" | sfdisk "$device"'
+                cloneCode=$tmpClone$_br'sfdisk -d "$device" > "'$name'"'
+            fi
+            ;;
+        store )
+            fsType=`blkid -o value -s TYPE "$device"`
+            name=`basename "$device" | sed "s/\([^.]*\)\..*/\1/g"`
+            name="./deviceFile_${name}_${fsType}.`fnRandomStr`.ptcl.img"
+            tmp=$_br"partclone.$fsType"
+            tmpRestore+=$tmp
+            tmpClone+=$tmp
+            restoreCode=$tmpRestore' --restore '$customOpt' -s "'$name'" -O "$device"'
+            cloneCode=$tmpClone' --clone '$customOpt' -s "$device" -O "'$name'"'
+            ;;
+    esac
+
+    fnBackupCode_singleRestore=$restoreCode
+    fnBackupCode_singleClone=$cloneCode
+}
+
+# 需在備份儲存目錄下執行
+fnExecClone() {
+    local len idx val
+    local cloneSh="$1"; shift
+
+    (( len= `echo "$cloneSh" | wc -l` ))
+    for (( idx=3 ; $idx < $len ; idx= $idx + 2 ))
+    do
+        echo
+        Loxog war "備份 $1 裝置 （ 3 秒後繼續 或 按 <確認鍵> 繼續 ） ： "
+        shift
+        read -t 3
+        val=`echo "$cloneSh" | sed -n "$idx,$(( $idx + 1 ))p"`
+        sh -c "$val"
+    done
+}
+
+# 需在備份儲存目錄下執行
+fnSplitFile() {
+    local quiet=$1
+    local splitOpt="$2"
+    local optAverage=$3
+
+    [ -z "$quiet" ] && quiet=0
+
+    local backupList
+    local tarName="deviceFile.tar.gz"
+    local storeDirName="wrapDeviceFile"
+
+    local tmpMsg=""
+    fnLogProcess() {
+        [ $quiet -eq 1 ] && return
+
+        [ "$1" == "clear" ] \
+            && printf "\r\e[K%s\n" "$tmpMsg $2" \
+            && return
+
+        printf "$1 $2"
+        tmpMsg="$1"
+    }
+
+    fnLsList "deviceFile_*.gpt.partitionData" "deviceFile_*.ptcl.img"
+    backupList=("${rtnLsList[@]}")
+
+    [ ${#backupList[@]} -eq 0 ] \
+        && Loxog err '找不到需要分段的文件。' \
+        && exit 1
+
+    _onCtrlC " [ -f 'wrapDeviceFile.md5' ] || rm -rf '$storeDirName'"
+    fnSplitFile_mkdirStoreDir "$storeDirName"
+
+    fnLogProcess "打包並壓縮備份文件" "( ... )"
+    # 使用 split -n 選項時需知道文件大小 故無法同過管道一段段地建立。
+    # tar -czf - <file ...> | split -b <size> - <prefixName>
+    _onCtrlC " [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
+    tar -czf "$tarName.tmp" "${backupList[@]}"
+    [ $? -ne 0 ] && exit 1
+    fnLogProcess "clear" "( 成功 )"
+
+    if [ -z "$splitOpt" ]; then
+        splitOpt=" -n `fnSplitFile_getOptAverage "$optAverage" "$tarName.tmp"`"
+        [ $? -ne 0 ] && exit 1
+    fi
+
+    fnLogProcess "分段文件" "( ... )"
+    split $splitOpt "$tarName.tmp" "$storeDirName/$tarName."
+    fnLogProcess "clear" "( 成功 )"
+    fnLogProcess "移除打包文件" "( ... )"
+    rm "$tarName.tmp"
+    fnLogProcess "clear" "( 成功 )"
+
+    fnLogProcess "建立校驗碼" "( ... )"
+    fnMd5sum_wrapDeviceFile > /dev/null
+    fnLogProcess "clear" "( 成功 )"
+}
+fnSplitFile_mkdirStoreDir() {
+    local dirName="$1"
+
+    [ ! -e "$dirName" ] \
+        && mkdir "$dirName" && return
+
+    [ -d "$dirName" ] && [ -z "`ls -A "$dirName"`" ] && return
+
+    Loxog err "請空出 \"$PWD/$dirName\" 位置供分段文件儲放。"
+    exit 1
+}
+fnSplitFile_getOptAverage() {
+    local tmp
+    local average=$1            # $1 > 0
+    local sourceFilePath="$2"
+
+    local totalSize
+
+    [ -z "$average" ] && average=256
+
+    tmp=`du --apparent-size "$sourceFilePath" | cut -f 1`
+    [ $? -ne 0 ] && exit 1
+    totalSize=$[ $tmp >> 10 ]
+
+    (( tmp= $totalSize / $average ))
+    [ $(( $totalSize % $average )) -ne 0 ] && (( tmp++ ))
+    echo $tmp
+}
+fnSplitFile_restore() {
+    local quiet=$1
+
+    [ -z "$quiet" ] && quiet=0
+
+    local tarName="deviceFile.tar.gz"
+    local storeDirName="wrapDeviceFile"
+
+    local tmpMsg=""
+    fnLogProcess() {
+        [ $quiet -eq 1 ] && return
+
+        [ "$1" == "clear" ] \
+            && printf "\r\e[K%s\n" "$tmpMsg $2" \
+            && return
+
+        printf "$1 $2"
+        tmpMsg="$1"
+    }
+
+    fnMd5sum_checkWrapDeviceFile
+
+    [ -z "`ls $storeDirName/$tarName.* 2> /dev/null`" ] \
+        && Loxog err '找不到需要分段的文件。' \
+        && exit 1
+
+    fnLogProcess "還原分段文件" "( ... )"
+    _onCtrlC " [ -f '$tarName.tmp' ] && rm '$tarName.tmp';"
+    cat $storeDirName/$tarName.* > "$tarName.tmp"
+    fnLogProcess "clear" "( 成功 )"
+
+    fnLogProcess "解壓縮備份文件" "( ... )"
+    tar -xzf "$tarName.tmp"
+    fnLogProcess "clear" "( 成功 )"
+
+    fnLogProcess "移除打包文件" "( ... )"
+    rm "$tarName.tmp"
+    fnLogProcess "clear" "( 成功 )"
+
+    fnMd5sum_checkDeviceFile
+}
+
+# 需在備份儲存目錄下執行
+fnMd5sum_deviceFile() {
+    local bisWrite=$1
+
+    fnLsList hostInfo.txt clone.sh restore.sh \
+        "deviceFile_*.gpt.partitionData" "deviceFile_*.ptcl.img"
+    [ ${#rtnLsList[@]} -eq 0 ] && return 2
+    [ "$bisWrite" == 0 ] \
+        && md5sum "${rtnLsList[@]}" \
+        || md5sum "${rtnLsList[@]}" | tee "deviceFile.md5"
+}
+fnMd5sum_wrapDeviceFile() {
+    local bisWrite=$1
+    local wrapDeviceFiles="wrapDeviceFile/deviceFile.tar.gz.*"
+
+    [ -z "`ls $wrapDeviceFiles 2> /dev/null`" ] && return 2
+
+    [ "$bisWrite" == 0 ] \
+        && md5sum $wrapDeviceFiles \
+        || md5sum $wrapDeviceFiles | tee "wrapDeviceFile.md5"
+}
+fnMd5sum_checkDeviceFile() {
+    local md5File="deviceFile.md5"
+
+    [ ! -f "$md5File" ] && return 2
+
+    printf "\n比對校驗碼\n"
+    md5sum -c "$md5File"
+    [ $? -ne 0 ] && Loxog err "校驗碼錯誤。" && exit 1
+    echo
+}
+fnMd5sum_checkWrapDeviceFile() {
+    local md5File="wrapDeviceFile.md5"
+
+    [ ! -f "$md5File" ] && return 2
+
+    printf "\n比對校驗碼\n"
+    md5sum -c "$md5File"
+    [ $? -ne 0 ] && Loxog err "校驗碼錯誤。" && exit 1
+    echo
+}
+
+
+##shStyle 腳本環境
+
+
+__filename=`realpath "$0"`
+_dirsh=`dirname "$__filename"`
+[ "$_originPlace" == "bin" ] && _binsh=$_dirsh || _binsh=`realpath "$_dirsh/../../bin"`
+[ "$_originPlace" == "bin" ] && _libsh=`realpath "$_dirsh/../lib"` || _libsh=`realpath "$_dirsh/.."`
+_fileName=`basename "$0"`
+
+_PWD=$PWD
+_br="
+"
+
+tmp=`tput colors`
+if [ -t 1 ] && [ -n "$tmp" ] && [ $tmp -ge 8 ]; then
+    _fN=`tput sgr0`
+    _f_bold=`tput bold`
+    _fRed=`tput setaf 1`
+    _fYel=`tput setaf 3`
+    _fRedB=$_fRed$_f_bold
+    _fYelB=$_fYel$_f_bold
+fi
+
+Loxog() {
+    local _stdin=`[ ! -t 0 ] && { \
+        IFS='';
+        while read pipeData; do echo "$pipeData"; done <&0;
+        unset IFS
+    }`
+    local method="$1"; shift
+
+    local color formatArgus
+
+    case $method in
+        com ) color=$_fN    ;; # common
+        war ) color=$_fYelB ;; # warn
+        err ) color=$_fRedB ;; # error
+    esac
+
+    formatArgus="$color%s$_fN\n"
+
+    local idx val len
+
+    [ -n "$*" ] && printf "$formatArgus" "$@" 1>&2
+
+    [ -z "$_stdin" ] && return
+    len=`echo "$_stdin" | wc -l`
+    for idx in `seq 1 $len`
+    do
+        val=`echo "$_stdin" | sed -n "${idx}p"`
+        printf "$formatArgus" "$val" 1>&2
+    done
+}
+
+_onCtrlC() {
+    local val
+    for val in "$@"
+    do
+        _onCtrlC_cmd+=$val$_br
+    done
+    trap 'sh -c "echo ; $_onCtrlC_cmd echo"; exit' 2
+}
+_onCtrlC_cmd=""
+
+
+##shStyle ###
+
+
+[ -L "$0" ] && exec "`realpath "$0"`" "$@"
+
+_stdin=`[ ! -t 0 ] && while read pipeData; do echo $pipeData; done <&0`
+
+_args=("$@")
+_origArgs=("$@")
+
+argsShift() {
+    local amount=$1
+
+    if [ -z "$amount" ] || [ $amount -lt 1 ]; then amount=1; fi
+    _args=("${_args[@]:$amount}")
+}
+
+_fnForceColor() {
+    _fN="\e[00m"
+    _f_bold="\e[01m"
+    _fRed="\e[31m"
+    _fYel="\e[33m"
+    _fRedB=$_fRed$_f_bold
+    _fYelB=$_fYel$_f_bold
+}
+
+fnParseOption() {
+    local fnHandleOpt="fnOpt_$_shCmd"
+
+    local tmp args opt val cutLen errMsg
+    args=("${_args[@]}")
+    errMsg=""
+
+    while [ 1 ]
+    do
+        opt=${args[0]}
+        val=${args[1]}
+        cutLen=2
+
+        if [ "$opt" == "--" ] || [ -z "`echo "_$opt" | grep "^_-"`" ]; then break; fi
+
+        if [ -n "`echo "_$opt" | grep "^_-[^-]"`" ] && [ ${#opt} -ne 2 ]; then
+            tmp="-"${opt:2}
+            opt=${opt:0:2}
+            val=""
+            cutLen=1
+            args=("$opt" "$tmp" "${args[@]:1}")
+        elif [ -n "`echo "_$val" | grep "^_-"`" ]; then
+            val=""
+            cutLen=1
+        fi
+
+        if [ "$opt" == "--color" ]; then
+            _fnForceColor
+            tmp=1
+        else
+            $fnHandleOpt "$opt" "$val"
+            tmp=$?
+        fi
+        case $tmp in
+            0 )
+                echo '請檢查 "'$fnHandleOpt'" 的錯誤回傳值。' 1>&2
+                exit
+                ;;
+            # 使用 1 個參數
+            1 )
+                [ $cutLen -eq 2 ] && (( cutLen-- ))
+                ;;
+            # 使用 2 個參數
+            2 ) ;;
+            3 )
+                errMsg+=$_br'找不到 "'$opt'" 選項。'
+                ;;
+            4 )
+                [ "$val" == "" ] && val="null" || val='"'$val'"'
+                errMsg+=$_br$val' 不符合 "'$opt'" 選項的預期值。'
+                ;;
+        esac
+
+        args=("${args[@]:$cutLen}")
+    done
+
+    if [ "${args[0]}" == "--" ]; then
+        args=("${args[@]:1}")
+    else
+        for val in "${args[@]}"
+        do
+            [ -z "`echo "_$val" | grep "^_-"`" ] && continue
+
+            errMsg+=$_br'不符合 "[命令] [選項] [參數]" 的命令用法。'
+            break
+        done
+    fi
+
+    if [ -z "$errMsg" ]; then
+        _args=("${args[@]}")
+        return
+    fi
+
+    echo "$errMsg" | sed "1d" \
+        | sed "s/^\(.\)/[$_fileName]: \1/" \
+        | Loxog err
+    exit 1
+}
+
+fnShowHelp() {
+    local txtHelp=`fnHelp_$_shCmd`
+
+    local bisUsage bisSubCmd bisOpt
+    local usage
+    bisUsage=` echo "$txtHelp" | grep "\[\[USAGE\]\]"`
+    bisSubCmd=`echo "$txtHelp" | grep "\[\[SUBCMD\]\]"`
+    bisOpt=`   echo "$txtHelp" | grep "\[\[OPT\]\]"`
+
+    if [ -n "$bisUsage" ]; then
+        usage="用法："
+        [ -n "$bisSubCmd" ] && usage+=" [命令]"
+        [ -n "$bisOpt" ] && usage+=" [選項]"
+
+        txtHelp=`echo "$txtHelp" | sed "s/\[\[USAGE\]\]/\n$usage/"`
+    fi
+
+    [ -n "$bisSubCmd" ] && \
+        txtHelp=`echo "$txtHelp" | sed "s/\[\[SUBCMD\]\]/\\n\\n命令：\\n/"`
+
+    [ -n "$bisOpt" ] && \
+        txtHelp=`echo "$txtHelp" | sed "s/\[\[OPT\]\]/\\n\\n選項：\\n/"`
+
+    echo "$txtHelp$_br"
+    exit
+}
+
+
+_shCmd=""
+_shCmdLevel=0
+_shScript "$@"
+[ $_shCmdLevel -eq 0 ] && _shCmd="main" && fnMain "$@" && exit
+for tmp in `seq 0 $(( $_shCmdLevel -1 ))`
+do _shCmd+="_${_args[ $tmp ]}"; done
+argsShift $_shCmdLevel
+_shCmd=${_shCmd:1}
+fnMain_$_shCmd "${_args[@]}"
+
