@@ -70,7 +70,7 @@ hostInfo.txt、restore.sh、clone.sh
 ## 使用方法
 
 
-先關使用方法可透過 `--help` 來查看， 例如：
+相關使用方法可透過 `--help` 來查看， 例如：
 
 ```
 $ ./bin/ptclHelper --help
